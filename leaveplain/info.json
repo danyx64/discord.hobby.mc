@@ -1,8 +1,8 @@
 {
   "author": ["danyx64"],
-  "description": "Invia un messaggio testuale personalizzabile in un canale specifico quando un membro lascia il server.",
+  "description": "Invia un messaggio testuale personalizzabile in un canale specifico quando un membro lascia il server. Supporta configurazione tramite mention, nome o ID del canale, test del canale e alias rapidi.",
   "short": "Avviso testuale quando un membro esce",
-  "install_msg": "LeavePlain installato. Caricalo e usa `[p]leaveplain canale #canale` per configurarlo.",
+  "install_msg": "LeavePlain installato. Caricalo e usa `[p]lp canale #canale` oppure `[p]lp canale ID` per configurarlo. Verifica con `[p]lp testcanale` e `[p]lp test`.",
   "requirements": [],
   "tags": ["leave", "uscite", "member", "logger", "italiano"],
   "type": "COG",

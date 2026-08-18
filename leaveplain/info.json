@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Invia un messaggio testuale personalizzabile in un canale specifico quando un membro lascia il server.",
+  "short": "Avviso testuale quando un membro esce",
+  "install_msg": "LeavePlain installato. Caricalo e usa `[p]leaveplain canale #canale` per configurarlo.",
+  "requirements": [],
+  "tags": ["leave", "uscite", "member", "logger", "italiano"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog non memorizza dati personali degli utenti che lasciano il server. Salva solamente la configurazione del server."
+}

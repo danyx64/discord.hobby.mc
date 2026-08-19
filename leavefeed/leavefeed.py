@@ -1,4 +1,8 @@
 import asyncio
+
+import discord
+from redbot.core import commands
+
 from .leavefeed_base import LeaveFeed as BaseLeaveFeed
 
 
@@ -7,22 +11,19 @@ class LeaveFeed(BaseLeaveFeed):
 
     __version__ = "1.1.0"
 
-    async def _was_kicked_or_banned(self, member):
+    async def _was_kicked_or_banned(self, member: discord.Member) -> bool:
         guild = member.guild
         me = guild.me
         if me is None or not me.guild_permissions.view_audit_log:
             return False
 
-        # Discord puo consegnare on_member_remove prima che la voce Audit Log
-        # sia immediatamente visibile. Facciamo pochi retry brevi prima del DM.
-        for delay in (0.35, 0.75, 1.25):
+        for delay in (0.30, 0.70, 1.20):
             await asyncio.sleep(delay)
             now = discord.utils.utcnow()
             for action in (discord.AuditLogAction.kick, discord.AuditLogAction.ban):
                 try:
                     async for entry in guild.audit_logs(limit=6, action=action):
-                        target = getattr(entry, "target", None)
-                        if getattr(target, "id", None) != member.id:
+                        if getattr(getattr(entry, "target", None), "id", None) != member.id:
                             continue
                         age = (now - entry.created_at).total_seconds()
                         if 0 <= age <= 12:

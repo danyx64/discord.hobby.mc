@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Audit logger completo per Red-DiscordBot. Registra in embed le principali azioni del server e le archivia in SQLite per ricerche successive tramite il gruppo [p]log.",
+  "short": "Audit logger completo con ricerca persistente",
+  "install_msg": "ServerLogger installato. Caricalo e usa `[p]log setchannel ID` per impostare il canale dei log, poi `[p]log enable`. Usa `[p]help log` per i comandi di ricerca.",
+  "requirements": [],
+  "tags": ["logger", "audit", "moderazione", "voice", "messaggi", "italiano"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog archivia localmente gli ID Discord coinvolti negli eventi, il tipo di azione, il canale, data e ora e alcuni dettagli tecnici necessari alla consultazione dei log. I dati possono essere eliminati dagli amministratori con il comando di pulizia previsto dal cog."
+}

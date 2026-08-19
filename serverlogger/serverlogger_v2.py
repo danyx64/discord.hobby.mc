@@ -9,9 +9,9 @@ from .serverlogger import ServerLogger as BaseServerLogger
 
 
 class ServerLogger(BaseServerLogger):
-    """ServerLogger v1.3: logging rapido, affidabile e con mention Discord."""
+    """ServerLogger v1.4: logging rapido, affidabile e con mention Discord."""
 
-    __version__ = "1.3.0"
+    __version__ = "1.4.0"
     MESSAGE_CACHE_MAX_PER_GUILD = 10000
     CACHE_PRUNE_EVERY = 250
 
@@ -48,6 +48,22 @@ class ServerLogger(BaseServerLogger):
         if not channel_id:
             return "—"
         return f"<#{int(channel_id)}>"
+
+    @staticmethod
+    def _display_role(role) -> str:
+        if role is None:
+            return "—"
+        return f"<@&{int(role.id)}>"
+
+    @staticmethod
+    def _display_channels(channels) -> str:
+        values = [f"<#{int(ch.id)}>" for ch in channels if ch is not None]
+        return ", ".join(values) if values else "—"
+
+    @staticmethod
+    def _display_roles(roles) -> str:
+        values = [f"<@&{int(role.id)}>" for role in roles if role is not None]
+        return ", ".join(values) if values else "—"
 
     @property
     def _italy_tz(self):
@@ -119,8 +135,6 @@ class ServerLogger(BaseServerLogger):
         if guild.me is None or not guild.me.guild_permissions.view_audit_log:
             return None
 
-        # Discord puo aggiornare l'Audit Log con un piccolo ritardo.
-        # Tre tentativi brevi mantengono il logger rapido senza perdere lo staffer.
         for delay in (0, 0.18, 0.42):
             if delay:
                 await asyncio.sleep(delay)
@@ -188,18 +202,32 @@ class ServerLogger(BaseServerLogger):
             db.commit()
             return row
 
+    async def _remove_cached_messages(self, message_ids):
+        ids = tuple(int(mid) for mid in message_ids)
+        if not ids:
+            return
+        async with self._db_lock:
+            await asyncio.to_thread(self._remove_cached_messages_sync, ids)
+
+    def _remove_cached_messages_sync(self, message_ids):
+        placeholders = ",".join("?" for _ in message_ids)
+        with self._connect() as db:
+            db.execute(
+                f"DELETE FROM message_cache WHERE message_id IN ({placeholders})",
+                message_ids,
+            )
+            db.commit()
+
     @commands.Cog.listener()
     async def on_message(self, message):
         await self._cache_message(message)
 
     @commands.Cog.listener()
     async def on_message_delete(self, message):
-        # Gestito da on_raw_message_delete per evitare doppi log.
         return
 
     @commands.Cog.listener()
     async def on_bulk_message_delete(self, messages):
-        # Gestito da on_raw_bulk_message_delete per evitare doppi log.
         return
 
     @commands.Cog.listener()
@@ -237,8 +265,6 @@ class ServerLogger(BaseServerLogger):
             channel_id=payload.channel_id,
         )
 
-        # Se non esiste un'azione moderativa nell'Audit Log, la cancellazione
-        # e' stata effettuata dall'autore stesso.
         if actor is None and author is not None:
             actor = author
 
@@ -270,7 +296,6 @@ class ServerLogger(BaseServerLogger):
             channel_id=payload.channel_id,
         )
 
-        # Cancella la cache in un solo accesso al DB, molto piu rapido dei pop singoli.
         await self._remove_cached_messages(payload.message_ids)
 
         await self._emit(
@@ -280,22 +305,6 @@ class ServerLogger(BaseServerLogger):
             channel=channel,
             details={"Quantita": len(payload.message_ids)},
         )
-
-    async def _remove_cached_messages(self, message_ids):
-        ids = tuple(int(mid) for mid in message_ids)
-        if not ids:
-            return
-        async with self._db_lock:
-            await asyncio.to_thread(self._remove_cached_messages_sync, ids)
-
-    def _remove_cached_messages_sync(self, message_ids):
-        placeholders = ",".join("?" for _ in message_ids)
-        with self._connect() as db:
-            db.execute(
-                f"DELETE FROM message_cache WHERE message_id IN ({placeholders})",
-                message_ids,
-            )
-            db.commit()
 
     @commands.Cog.listener()
     async def on_message_edit(self, before, after):
@@ -313,4 +322,181 @@ class ServerLogger(BaseServerLogger):
                 "Prima": self._clean_text(before.content, 400),
                 "Dopo": self._clean_text(after.content, 400),
             },
+        )
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before, after):
+        guild = after.guild
+
+        if before.nick != after.nick:
+            actor = await self._find_audit_actor(
+                guild, discord.AuditLogAction.member_update, target_id=after.id
+            )
+            await self._emit(
+                guild,
+                "Nickname modificato",
+                staffer=actor,
+                user=after,
+                details={"Prima": before.nick or before.name, "Dopo": after.nick or after.name},
+            )
+
+        before_roles = {role.id: role for role in before.roles}
+        after_roles = {role.id: role for role in after.roles}
+        added = [role for rid, role in after_roles.items() if rid not in before_roles]
+        removed = [role for rid, role in before_roles.items() if rid not in after_roles]
+
+        if added or removed:
+            actor = await self._find_audit_actor(
+                guild, discord.AuditLogAction.member_role_update, target_id=after.id
+            )
+            if added:
+                await self._emit(
+                    guild,
+                    "Ruolo aggiunto",
+                    staffer=actor,
+                    user=after,
+                    details={"Ruolo": self._display_roles(added)},
+                )
+            if removed:
+                await self._emit(
+                    guild,
+                    "Ruolo rimosso",
+                    staffer=actor,
+                    user=after,
+                    details={"Ruolo": self._display_roles(removed)},
+                )
+
+        if before.timed_out_until != after.timed_out_until:
+            actor = await self._find_audit_actor(
+                guild, discord.AuditLogAction.member_update, target_id=after.id
+            )
+            until = (
+                after.timed_out_until.astimezone(self._italy_tz).strftime("%d/%m/%Y %H:%M:%S")
+                if after.timed_out_until
+                else None
+            )
+            await self._emit(
+                guild,
+                "Timeout applicato/modificato" if after.timed_out_until else "Timeout rimosso",
+                staffer=actor,
+                user=after,
+                details={"Fino a": until},
+            )
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        guild = member.guild
+
+        if before.channel != after.channel:
+            if before.channel is None and after.channel is not None:
+                await self._emit(guild, "Ingresso in vocale", user=member, channel=after.channel)
+            elif before.channel is not None and after.channel is None:
+                actor = await self._find_audit_actor(guild, discord.AuditLogAction.member_disconnect)
+                await self._emit(
+                    guild,
+                    "Disconnesso dalla vocale" if actor else "Uscita dalla vocale",
+                    staffer=actor,
+                    user=member,
+                    channel=before.channel,
+                )
+            elif before.channel is not None and after.channel is not None:
+                actor = await self._find_audit_actor(guild, discord.AuditLogAction.member_move)
+                await self._emit(
+                    guild,
+                    "Spostato in un altro canale vocale" if actor else "Cambio canale vocale",
+                    staffer=actor,
+                    user=member,
+                    channel=after.channel,
+                    details={"Da": before.channel.mention, "A": after.channel.mention},
+                )
+
+        for old, new, on, off in (
+            (before.mute, after.mute, "Server mute", "Server unmute"),
+            (before.deaf, after.deaf, "Server deafen", "Server undeafen"),
+        ):
+            if old != new:
+                actor = await self._find_audit_actor(
+                    guild, discord.AuditLogAction.member_update, target_id=member.id
+                )
+                await self._emit(
+                    guild,
+                    on if new else off,
+                    staffer=actor,
+                    user=member,
+                    channel=after.channel or before.channel,
+                )
+
+        for old, new, on, off in (
+            (before.self_mute, after.self_mute, "Self mute", "Self unmute"),
+            (before.self_deaf, after.self_deaf, "Self deafen", "Self undeafen"),
+            (before.self_stream, after.self_stream, "Streaming avviato", "Streaming terminato"),
+            (before.self_video, after.self_video, "Webcam attivata", "Webcam disattivata"),
+        ):
+            if old != new:
+                await self._emit(
+                    guild,
+                    on if new else off,
+                    user=member,
+                    channel=after.channel or before.channel,
+                )
+
+    @commands.Cog.listener()
+    async def on_guild_role_create(self, role):
+        actor = await self._find_audit_actor(
+            role.guild, discord.AuditLogAction.role_create, target_id=role.id
+        )
+        await self._emit(
+            role.guild,
+            "Ruolo creato",
+            staffer=actor,
+            details={"Ruolo": role.mention, "ID": role.id},
+        )
+
+    @commands.Cog.listener()
+    async def on_guild_role_update(self, before, after):
+        actor = await self._find_audit_actor(
+            after.guild, discord.AuditLogAction.role_update, target_id=after.id
+        )
+        details = {"Ruolo": after.mention}
+        if before.name != after.name:
+            details["Nome"] = f"{before.name} → {after.name}"
+        if before.permissions != after.permissions:
+            details["Permessi"] = "Modificati"
+        if before.colour != after.colour:
+            details["Colore"] = f"{before.colour} → {after.colour}"
+        await self._emit(after.guild, "Ruolo modificato", staffer=actor, details=details)
+
+    @commands.Cog.listener()
+    async def on_guild_role_delete(self, role):
+        actor = await self._find_audit_actor(
+            role.guild, discord.AuditLogAction.role_delete, target_id=role.id
+        )
+        await self._emit(
+            role.guild,
+            "Ruolo eliminato",
+            staffer=actor,
+            details={"Ruolo": role.name, "ID": role.id},
+        )
+
+    @commands.Cog.listener()
+    async def on_guild_channel_update(self, before, after):
+        actor = await self._find_audit_actor(
+            after.guild, discord.AuditLogAction.channel_update, target_id=after.id
+        )
+        details = {"Canale": after.mention}
+        if before.name != after.name:
+            details["Nome"] = f"{before.name} → {after.name}"
+        before_category = getattr(before, "category", None)
+        after_category = getattr(after, "category", None)
+        if self._object_id(before_category) != self._object_id(after_category):
+            details["Categoria prima"] = before_category.mention if before_category else "—"
+            details["Categoria dopo"] = after_category.mention if after_category else "—"
+        if getattr(before, "position", None) != getattr(after, "position", None):
+            details["Posizione"] = f"{getattr(before, 'position', '—')} → {getattr(after, 'position', '—')}"
+        await self._emit(
+            after.guild,
+            "Canale modificato",
+            staffer=actor,
+            channel=after,
+            details=details,
         )

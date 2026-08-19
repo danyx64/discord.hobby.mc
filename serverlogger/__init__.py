@@ -1,4 +1,4 @@
-from .serverlogger_v2 import ServerLogger
+from .serverlogger_v3 import ServerLogger
 
 
 async def setup(bot):

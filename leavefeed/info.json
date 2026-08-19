@@ -1,8 +1,8 @@
 {
   "author": ["danyx64"],
-  "description": "Invia un DM personalizzabile ai membri che lasciano volontariamente il server con uno o piu pulsanti. Ogni pulsante puo aprire un modal diverso con fino a 5 domande configurabili; kick e ban vengono ignorati.",
-  "short": "Feedback uscita con DM, pulsanti e modali",
-  "install_msg": "LeaveFeed installato. Usa `[p]leavefeed setchannel ID`, configura il messaggio e almeno un modal, poi `[p]leavefeed enable`. Prova tutto con `[p]leavefeed test`.",
+  "description": "Invia un DM personalizzabile ai membri che lasciano volontariamente il server. Supporta piu messaggi configurabili, pulsanti assegnabili ai singoli messaggi, modal indipendenti con fino a 5 domande e risposta finale personalizzabile. Kick e ban vengono ignorati.",
+  "short": "Feedback uscita con messaggi, pulsanti e modali configurabili",
+  "install_msg": "LeaveFeed installato. Usa `[p]leavefeed setchannel ID`, poi configura messaggi, modali e pulsanti sotto `[p]leavefeed`. Usa `[p]help leavefeed` per vedere descrizione e sintassi di ogni azione, quindi `[p]leavefeed enable`. Prova tutto con `[p]leavefeed test`.",
   "requirements": [],
   "tags": ["leave", "feedback", "dm", "modal", "buttons", "italiano"],
   "type": "COG",

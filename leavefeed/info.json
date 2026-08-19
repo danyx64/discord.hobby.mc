@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Invia un DM personalizzabile ai membri che lasciano il server con uno o piu pulsanti. Ogni pulsante puo aprire un modal diverso con fino a 5 domande configurabili; le risposte vengono inviate in un canale staff con embed semplice.",
+  "short": "Feedback uscita con DM, pulsanti e modali",
+  "install_msg": "LeaveFeed installato. Usa `[p]leavefeed setchannel ID`, configura il messaggio e almeno un modal, poi `[p]leavefeed enable`. Prova tutto con `[p]leavefeed test`.",
+  "requirements": [],
+  "tags": ["leave", "feedback", "dm", "modal", "buttons", "italiano"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog non conserva le risposte degli utenti in un database proprio. Salva solo la configurazione del server. Le risposte vengono inviate nel canale Discord configurato dagli amministratori."
+}

@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Gestione della gerarchia del server, ruoli, assegnazioni, permessi globali e overwrite dei canali tramite il gruppo [p]ha.",
+  "short": "Gestione gerarchia, ruoli e permessi",
+  "install_msg": "HierarchyAdmin installato. Caricalo e usa `[p]ha usage` oppure `[p]help ha` per vedere tutti i comandi.",
+  "requirements": [],
+  "tags": ["roles", "permissions", "hierarchy", "admin", "moderazione", "italiano"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog non archivia dati personali persistenti. Modifica ruoli e permessi direttamente tramite le API Discord su richiesta degli amministratori."
+}

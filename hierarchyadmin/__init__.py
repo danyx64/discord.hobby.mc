@@ -1,4 +1,4 @@
-from .hierarchyadmin_v2 import HierarchyAdmin
+from .hierarchyadmin_v3 import HierarchyAdmin
 
 
 async def setup(bot):

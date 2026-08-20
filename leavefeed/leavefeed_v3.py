@@ -12,7 +12,7 @@ ITALY_TZ = ZoneInfo("Europe/Rome")
 class LeaveFeed(BaseLeaveFeed):
     """LeaveFeed v2.1: placeholder avanzati e guida integrata per i messaggi."""
 
-    __version__ = "2.1.0"
+    __version__ = "2.1.1"
 
     @staticmethod
     def _render_message(template: str, user, guild: discord.Guild) -> str:
@@ -49,7 +49,15 @@ class LeaveFeed(BaseLeaveFeed):
 
     async def _send_leave_dm(self, user, guild: discord.Guild) -> bool:
         data = await self._ensure_schema(guild)
-        if not data.get("enabled"):
+
+        # Il test viene eseguito su un membro ancora presente nel server.
+        # L'invio automatico avviene invece dopo on_member_remove, quando il
+        # membro non è più nella cache della guild. In questo modo `.leavefeed
+        # test` funziona anche da disattivato senza ignorare enable/disable per
+        # le vere uscite.
+        user_id = getattr(user, "id", None)
+        is_test_target = bool(user_id and guild.get_member(user_id) is not None)
+        if not data.get("enabled") and not is_test_target:
             return False
 
         message_key = data.get("active_message")

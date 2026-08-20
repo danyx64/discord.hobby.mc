@@ -1,8 +1,9 @@
 import asyncio
 
 import discord
+from redbot.core import commands
 
-from .leavefeed_v4 import LeaveFeed as BaseLeaveFeed, ContinueView, ChoiceView, ITALY_TZ
+from .leavefeed_v4 import LeaveFeed as BaseLeaveFeed, ContinueView, ChoiceView
 
 
 class FinalizingTextPageModal(discord.ui.Modal):
@@ -45,7 +46,6 @@ class FinalizingTextPageModal(discord.ui.Modal):
         if not modal:
             return await interaction.response.send_message("Modal non trovato.", ephemeral=True)
 
-        # Se questa era l'ultima pagina, invia subito il feedback al canale.
         if session["index"] >= len(modal.get("elements") or []):
             return await self.cog._finish_session(interaction, self.session_id, modal)
 
@@ -67,8 +67,6 @@ class LeaveFeed(BaseLeaveFeed):
         if me is None or not me.guild_permissions.view_audit_log:
             return False
 
-        # Controlli brevi: abbastanza da lasciare apparire l'Audit Log senza
-        # aspettare secondi prima del tentativo DM.
         for delay in (0.0, 0.15, 0.25):
             if delay:
                 await asyncio.sleep(delay)
@@ -84,11 +82,6 @@ class LeaveFeed(BaseLeaveFeed):
                 except (discord.Forbidden, discord.HTTPException):
                     return False
         return False
-
-    @discord.utils.cached_slot_property("_dummy_leavefeed_marker")
-    def _dummy_leavefeed_marker(self):
-        # Nessun comportamento: mantiene la classe priva di stato aggiuntivo.
-        return True
 
     async def show_current_step(self, interaction: discord.Interaction, session_id: str):
         session = self._sessions.get(session_id)
@@ -138,7 +131,7 @@ class LeaveFeed(BaseLeaveFeed):
             FinalizingTextPageModal(self, session_id, title, entries)
         )
 
-    @discord.ext.commands.Cog.listener()
+    @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         if member.bot:
             return
@@ -147,10 +140,6 @@ class LeaveFeed(BaseLeaveFeed):
         if not data.get("enabled"):
             return
 
-        # Prova ad aprire immediatamente il canale DM prima del controllo Audit
-        # Log. Non invia alcun messaggio finche non sappiamo che non e un
-        # kick/ban, ma riduce il rischio che Discord chiuda la possibilita di DM
-        # mentre aspettiamo l'Audit Log.
         try:
             await member.create_dm()
         except (discord.Forbidden, discord.HTTPException):

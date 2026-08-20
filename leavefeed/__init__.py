@@ -1,4 +1,4 @@
-from .leavefeed_v4 import LeaveFeed
+from .leavefeed_v5 import LeaveFeed
 
 
 async def setup(bot):

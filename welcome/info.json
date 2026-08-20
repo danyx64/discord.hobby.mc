@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Messaggio di benvenuto semplice e personalizzabile per Red-DiscordBot, con placeholder per menzione utente, nome server, conteggio membri, data e ora.",
+  "short": "Welcome personalizzabile con placeholder",
+  "install_msg": "Welcome installato. Usa `[p]welcome setchannel ID`, `[p]welcome message ...`, `[p]welcome enable` e `[p]welcome usage`.",
+  "requirements": [],
+  "tags": ["welcome", "benvenuto", "join", "italiano"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog salva solo la configurazione del server necessaria al messaggio di benvenuto; non archivia dati personali dei membri."
+}

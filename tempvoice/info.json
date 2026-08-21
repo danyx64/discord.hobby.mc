@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Canali vocali temporanei con slash command /voice, pannello persistente, privacy, trust/block, trasferimento, claim e ruolo osservatore.",
+  "install_msg": "TempVoice installato. Caricalo e usa /voice setup, /voice panel e /voice enable.",
+  "short": "TempVoice completo con /voice e pulsantiera.",
+  "end_user_data_statement": "Memorizza configurazione del server e ID necessari a gestire proprietari, utenti fidati/bloccati e canali temporanei.",
+  "min_bot_version": "3.5.0",
+  "requirements": [],
+  "tags": ["voice", "tempvoice", "temporary", "slash", "utility"]
+}

@@ -8,10 +8,6 @@ from redbot.core.bot import Red
 
 
 DEFAULT_WORDS = [
-    "dio",
-    "gesu cristo",
-    "gesù cristo",
-    "allah",
     "porco dio",
     "dio cane",
     "dio porco",
@@ -34,6 +30,16 @@ DEFAULT_WORDS = [
     "bastarda",
 ]
 
+# Questi termini, da soli, non devono mai fare punteggio.
+STANDALONE_IGNORED = {
+    "dio",
+    "gesu",
+    "gesu cristo",
+    "allah",
+    "madonna",
+    "cristo",
+}
+
 DEFAULT_REPLY = "{mention} ha bestemmiato per la {count}ª volta."
 
 
@@ -41,7 +47,7 @@ class SwearJar(commands.Cog):
     """Conta bestemmie/parolacce, risponde al messaggio e mostra una leaderboard."""
 
     __author__ = "danyx64"
-    __version__ = "1.0.0"
+    __version__ = "1.1.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -55,6 +61,16 @@ class SwearJar(commands.Cog):
         )
         self.config.register_member(count=0)
 
+    async def cog_load(self):
+        # Migrazione automatica dalle vecchie configurazioni: rimuove i nomi
+        # religiosi che erano stati salvati come trigger autonomi.
+        ignored = {self._normalize(term) for term in STANDALONE_IGNORED}
+        for guild in self.bot.guilds:
+            words = await self.config.guild(guild).words()
+            filtered = [word for word in words if self._normalize(word) not in ignored]
+            if filtered != words:
+                await self.config.guild(guild).words.set(filtered)
+
     @staticmethod
     def _normalize(text: str) -> str:
         text = unicodedata.normalize("NFKD", text.casefold())
@@ -62,13 +78,31 @@ class SwearJar(commands.Cog):
         text = re.sub(r"[^a-z0-9]+", " ", text)
         return re.sub(r"\s+", " ", text).strip()
 
+    @staticmethod
+    def _raw_normalize(text: str) -> str:
+        """Lowercase + rimozione accenti, mantenendo i separatori per il matcher."""
+        text = unicodedata.normalize("NFKD", text.casefold())
+        return "".join(ch for ch in text if not unicodedata.combining(ch))
+
     @classmethod
     def _contains_term(cls, content: str, term: str) -> bool:
-        content_n = cls._normalize(content)
         term_n = cls._normalize(term)
-        if not content_n or not term_n:
+        if not term_n or term_n in {cls._normalize(x) for x in STANDALONE_IGNORED}:
             return False
-        return re.search(rf"(?<![a-z0-9]){re.escape(term_n)}(?![a-z0-9])", content_n) is not None
+
+        content_raw = cls._raw_normalize(content)
+        tokens = term_n.split()
+
+        # Una frase configurata viene riconosciuta sia separata che attaccata:
+        # "porco dio", "porcodio", "porco-dio", "porco.dio", ecc.
+        if len(tokens) > 1:
+            pattern = r"(?<![a-z0-9])" + r"[^a-z0-9]*".join(re.escape(token) for token in tokens) + r"(?![a-z0-9])"
+            return re.search(pattern, content_raw, flags=re.IGNORECASE) is not None
+
+        # Per una singola parolaccia manteniamo i confini di parola per evitare
+        # falsi positivi dentro parole innocue.
+        token = re.escape(tokens[0])
+        return re.search(rf"(?<![a-z0-9]){token}(?![a-z0-9])", content_raw, flags=re.IGNORECASE) is not None
 
     async def _channel_allowed(self, guild: discord.Guild, channel_id: int) -> bool:
         mode = await self.config.guild(guild).channel_mode()
@@ -206,6 +240,8 @@ class SwearJar(commands.Cog):
         term = term.strip()
         if not term:
             return await ctx.send("Inserisci una parola o frase.")
+        if self._normalize(term) in {self._normalize(x) for x in STANDALONE_IGNORED}:
+            return await ctx.send("Quel termine religioso da solo non viene conteggiato. Aggiungi una frase completa, ad esempio `porco dio`.")
         async with self.config.guild(ctx.guild).words() as words:
             normalized = {self._normalize(w) for w in words}
             if self._normalize(term) in normalized:

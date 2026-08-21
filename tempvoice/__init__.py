@@ -1,23 +1,18 @@
-import discord
-
-from .tempvoice import TempVoice
+from .tempvoice import TempVoice, TempVoicePanel
 
 
 async def setup(bot):
-    # Pulisce eventuali residui di una precedente registrazione del cog/comando.
-    old_cog = bot.get_cog("TempVoice")
-    if old_cog is not None:
-        try:
-            await bot.remove_cog("TempVoice")
-        except Exception:
-            pass
+    # Red 3.5.24/discord.py 2.7 registra automaticamente gli app_commands del Cog
+    # durante add_cog(). La vecchia cog_load di TempVoice tentava poi di registrare
+    # /voice una seconda volta. Manteniamo solo il pannello persistente.
+    cog = TempVoice(bot)
 
-    # Rimuove qualunque vecchio /voice rimasto nell'albero prima che Red inietti
-    # automaticamente gli app_commands dichiarati nel nuovo cog.
-    try:
-        while bot.tree.get_command("voice", type=discord.AppCommandType.chat_input) is not None:
-            bot.tree.remove_command("voice", type=discord.AppCommandType.chat_input)
-    except Exception:
-        pass
+    async def safe_cog_load():
+        bot.add_view(TempVoicePanel(cog))
 
-    await bot.add_cog(TempVoice(bot))
+    cog.cog_load = safe_cog_load
+
+    # Se un altro /voice o una registrazione rimasta in memoria esiste gia', Red
+    # riceve override=True e sostituisce il comando invece di sollevare
+    # CommandAlreadyRegistered durante l'iniezione del Cog.
+    await bot.add_cog(cog, override=True)

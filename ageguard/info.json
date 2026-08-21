@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Protezione anti-alt per Red-DiscordBot: espelle automaticamente gli account Discord più recenti della soglia configurata, con DM personalizzabile, canale log e storico.",
+  "short": "Kick automatico per account troppo recenti",
+  "install_msg": "AgeGuard installato. Usa `[p]ageguard minage 3d`, `[p]ageguard setchannel ID`, `[p]ageguard message usage` e infine `[p]ageguard enable`.",
+  "requirements": [],
+  "tags": ["moderazione", "anti-alt", "security", "account-age", "italiano"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog salva localmente uno storico limitato degli account espulsi per età insufficiente, inclusi ID utente, username, età account, data di creazione, data del kick ed esito del DM. Gli amministratori possono consultare lo storico con il comando previsto dal cog."
+}

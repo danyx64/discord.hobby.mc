@@ -16,3 +16,7 @@ async def setup(bot):
     # riceve override=True e sostituisce il comando invece di sollevare
     # CommandAlreadyRegistered durante l'iniezione del Cog.
     await bot.add_cog(cog, override=True)
+
+    # Pubblica subito gli slash command su Discord. Senza sync il Cog puo' risultare
+    # caricato correttamente ma /voice non comparire nel client.
+    await bot.tree.sync()

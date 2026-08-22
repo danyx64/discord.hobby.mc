@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Mantiene il bot connesso a un canale vocale configurato tramite ID e si riconnette automaticamente dopo riavvii o disconnessioni.",
+  "short": "AFK vocale persistente",
+  "install_msg": "Carica il cog e usa `[p]afkvoice set <channel_id>` poi `[p]afkvoice enable`.",
+  "requirements": [],
+  "tags": ["voice", "afk", "autoconnect", "persistent"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog salva solamente l'ID del canale vocale configurato e lo stato attivo/disattivo per ciascun server."
+}

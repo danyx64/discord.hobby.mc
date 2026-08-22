@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from pathlib import Path
 from typing import List
 
 import discord
@@ -12,7 +13,6 @@ DEFAULT_DEITIES = [
     "signore", "padre eterno", "spirito santo", "vergine maria", "maria",
 ]
 
-# Lista moderazione: da sola NON fa punteggio. Serve sempre anche una divinita'.
 DEFAULT_PROFANITIES = [
     "cazzo", "cazzi", "cazzone", "cazzata", "cazzate", "minchia", "minchione",
     "merda", "merde", "stronzo", "stronza", "stronzi", "stronze",
@@ -42,14 +42,17 @@ class SwearJar(commands.Cog):
     """Conta solo messaggi che contengono sia una divinita' sia una parolaccia."""
 
     __author__ = "danyx64"
-    __version__ = "2.0.0"
+    __version__ = "2.1.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
+        self.base_path = Path(__file__).resolve().parent
+        self.deities_file = self.base_path / "divinita.txt"
+        self.profanities_file = self.base_path / "parolacce.txt"
         self.config = Config.get_conf(self, identifier=927315640118477221, force_registration=True)
         self.config.register_guild(
             enabled=True,
-            words=[],  # mantenuto per compatibilita' con vecchie config
+            words=[],
             deities=DEFAULT_DEITIES,
             profanities=DEFAULT_PROFANITIES,
             reply_message=DEFAULT_REPLY,
@@ -58,13 +61,61 @@ class SwearJar(commands.Cog):
         )
         self.config.register_member(count=0)
 
-    async def cog_load(self):
-        # Se la nuova configurazione e' vuota, ripristina i dizionari moderni.
+    @staticmethod
+    def _clean_file_values(lines: List[str]) -> List[str]:
+        values = []
+        seen = set()
+        for line in lines:
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            key = value.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(value)
+        return values
+
+    def _write_dictionary_file(self, path: Path, values: List[str], header: str):
+        content = header.rstrip() + "\n" + "\n".join(values) + "\n"
+        path.write_text(content, encoding="utf-8")
+
+    def _ensure_dictionary_files(self):
+        if not self.deities_file.exists():
+            self._write_dictionary_file(
+                self.deities_file,
+                DEFAULT_DEITIES,
+                "# Una divinita' / riferimento religioso per riga.\n"
+                "# Serve sempre anche una voce di parolacce.txt nello stesso messaggio.",
+            )
+        if not self.profanities_file.exists():
+            self._write_dictionary_file(
+                self.profanities_file,
+                DEFAULT_PROFANITIES,
+                "# Una parolaccia / insulto per riga.\n"
+                "# Da sola NON fa punteggio: serve sempre anche una voce di divinita.txt.",
+            )
+
+    def _read_dictionary_file(self, path: Path, fallback: List[str]) -> List[str]:
+        try:
+            values = self._clean_file_values(path.read_text(encoding="utf-8").splitlines())
+            return values or list(fallback)
+        except OSError:
+            return list(fallback)
+
+    async def _sync_files_to_all_guilds(self):
+        deities = self._read_dictionary_file(self.deities_file, DEFAULT_DEITIES)
+        profanities = self._read_dictionary_file(self.profanities_file, DEFAULT_PROFANITIES)
         for guild in self.bot.guilds:
-            if not await self.config.guild(guild).deities():
-                await self.config.guild(guild).deities.set(DEFAULT_DEITIES)
-            if not await self.config.guild(guild).profanities():
-                await self.config.guild(guild).profanities.set(DEFAULT_PROFANITIES)
+            await self.config.guild(guild).deities.set(deities)
+            await self.config.guild(guild).profanities.set(profanities)
+
+    async def cog_load(self):
+        try:
+            self._ensure_dictionary_files()
+        except OSError:
+            pass
+        await self._sync_files_to_all_guilds()
 
     @staticmethod
     def _normalize(text: str) -> str:
@@ -91,7 +142,6 @@ class SwearJar(commands.Cog):
         if deity and profanity:
             return deity, profanity
 
-        # Secondo passaggio per forme attaccate tipo "porcodio", "diocane", ecc.
         compact = cls._normalize(content).replace(" ", "")
         for d in deities:
             d_n = cls._normalize(d).replace(" ", "")
@@ -99,9 +149,7 @@ class SwearJar(commands.Cog):
                 continue
             for p in profanities:
                 p_n = cls._normalize(p).replace(" ", "")
-                if not p_n:
-                    continue
-                if d_n + p_n in compact or p_n + d_n in compact:
+                if p_n and (d_n + p_n in compact or p_n + d_n in compact):
                     return d, p
         return None
 
@@ -133,8 +181,7 @@ class SwearJar(commands.Cog):
         deity, profanity = matched
 
         member_group = self.config.member(message.author)
-        current = await member_group.count()
-        new_count = current + 1
+        new_count = (await member_group.count()) + 1
         await member_group.count.set(new_count)
 
         template = await self.config.guild(message.guild).reply_message()
@@ -186,8 +233,20 @@ class SwearJar(commands.Cog):
             f"Stato: **{'attivo' if enabled else 'disattivato'}**\n"
             f"Regola: **serve sempre divinita' + parolaccia nello stesso messaggio**\n"
             f"Divinita': `{len(deities)}` | Parolacce/insulti: `{len(profanities)}`\n"
+            f"File: `divinita.txt` + `parolacce.txt`\n"
             f"Modalita' canali: **{mode}** | Canali configurati: `{len(channels)}`"
         )
+
+    @swearjar.command(name="reloadfiles")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def reload_files(self, ctx: commands.Context):
+        """Rilegge divinita.txt e parolacce.txt dalla cartella del cog."""
+        try:
+            self._ensure_dictionary_files()
+        except OSError as exc:
+            return await ctx.send(f"Errore accesso file: `{exc}`")
+        await self._sync_files_to_all_guilds()
+        await ctx.send("Dizionari ricaricati dai due file del cog.")
 
     @swearjar.group(name="message", invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
@@ -223,7 +282,7 @@ class SwearJar(commands.Cog):
 
     @swear_deities.command(name="list")
     async def swear_deities_list(self, ctx: commands.Context):
-        values = await self.config.guild(ctx.guild).deities()
+        values = self._read_dictionary_file(self.deities_file, DEFAULT_DEITIES)
         await ctx.send("Divinita': " + ", ".join(f"`{x}`" for x in values))
 
     @swear_deities.command(name="add")
@@ -231,26 +290,51 @@ class SwearJar(commands.Cog):
         term = term.strip()
         if not term:
             return await ctx.send("Inserisci un termine.")
-        async with self.config.guild(ctx.guild).deities() as values:
-            if self._normalize(term) in {self._normalize(x) for x in values}:
-                return await ctx.send("Gia' presente.")
-            values.append(term)
-        await ctx.send(f"Divinita' aggiunta: `{term}`")
+        values = self._read_dictionary_file(self.deities_file, DEFAULT_DEITIES)
+        if self._normalize(term) in {self._normalize(x) for x in values}:
+            return await ctx.send("Gia' presente.")
+        values.append(term)
+        try:
+            self._write_dictionary_file(
+                self.deities_file,
+                values,
+                "# Una divinita' / riferimento religioso per riga.\n# Serve sempre anche una voce di parolacce.txt nello stesso messaggio.",
+            )
+        except OSError as exc:
+            return await ctx.send(f"Errore scrittura file: `{exc}`")
+        await self._sync_files_to_all_guilds()
+        await ctx.send(f"Divinita' aggiunta a `divinita.txt`: `{term}`")
 
     @swear_deities.command(name="remove")
     async def swear_deities_remove(self, ctx: commands.Context, *, term: str):
         target = self._normalize(term)
-        async with self.config.guild(ctx.guild).deities() as values:
-            index = next((i for i, x in enumerate(values) if self._normalize(x) == target), None)
-            if index is None:
-                return await ctx.send("Non trovata.")
-            removed = values.pop(index)
-        await ctx.send(f"Rimossa: `{removed}`")
+        values = self._read_dictionary_file(self.deities_file, DEFAULT_DEITIES)
+        new_values = [x for x in values if self._normalize(x) != target]
+        if len(new_values) == len(values):
+            return await ctx.send("Non trovata.")
+        try:
+            self._write_dictionary_file(
+                self.deities_file,
+                new_values,
+                "# Una divinita' / riferimento religioso per riga.\n# Serve sempre anche una voce di parolacce.txt nello stesso messaggio.",
+            )
+        except OSError as exc:
+            return await ctx.send(f"Errore scrittura file: `{exc}`")
+        await self._sync_files_to_all_guilds()
+        await ctx.send(f"Rimossa da `divinita.txt`: `{term}`")
 
     @swear_deities.command(name="reset")
     async def swear_deities_reset(self, ctx: commands.Context):
-        await self.config.guild(ctx.guild).deities.set(DEFAULT_DEITIES)
-        await ctx.send("Lista divinita' ripristinata.")
+        try:
+            self._write_dictionary_file(
+                self.deities_file,
+                DEFAULT_DEITIES,
+                "# Una divinita' / riferimento religioso per riga.\n# Serve sempre anche una voce di parolacce.txt nello stesso messaggio.",
+            )
+        except OSError as exc:
+            return await ctx.send(f"Errore scrittura file: `{exc}`")
+        await self._sync_files_to_all_guilds()
+        await ctx.send("`divinita.txt` ripristinato.")
 
     @swearjar.group(name="profanities", aliases=["words", "parole", "parolacce"], invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
@@ -259,7 +343,7 @@ class SwearJar(commands.Cog):
 
     @swear_profanities.command(name="list")
     async def swear_profanities_list(self, ctx: commands.Context):
-        values = await self.config.guild(ctx.guild).profanities()
+        values = self._read_dictionary_file(self.profanities_file, DEFAULT_PROFANITIES)
         text = "\n".join(f"`{i}.` {word}" for i, word in enumerate(values, 1))
         for start in range(0, len(text), 1800):
             await ctx.send(text[start:start + 1800])
@@ -269,26 +353,51 @@ class SwearJar(commands.Cog):
         term = term.strip()
         if not term:
             return await ctx.send("Inserisci una parola o frase.")
-        async with self.config.guild(ctx.guild).profanities() as values:
-            if self._normalize(term) in {self._normalize(x) for x in values}:
-                return await ctx.send("Gia' presente.")
-            values.append(term)
-        await ctx.send(f"Aggiunta: `{term}`")
+        values = self._read_dictionary_file(self.profanities_file, DEFAULT_PROFANITIES)
+        if self._normalize(term) in {self._normalize(x) for x in values}:
+            return await ctx.send("Gia' presente.")
+        values.append(term)
+        try:
+            self._write_dictionary_file(
+                self.profanities_file,
+                values,
+                "# Una parolaccia / insulto per riga.\n# Da sola NON fa punteggio: serve sempre anche una voce di divinita.txt.",
+            )
+        except OSError as exc:
+            return await ctx.send(f"Errore scrittura file: `{exc}`")
+        await self._sync_files_to_all_guilds()
+        await ctx.send(f"Aggiunta a `parolacce.txt`: `{term}`")
 
     @swear_profanities.command(name="remove", aliases=["del", "delete"])
     async def swear_profanities_remove(self, ctx: commands.Context, *, term: str):
         target = self._normalize(term)
-        async with self.config.guild(ctx.guild).profanities() as values:
-            index = next((i for i, x in enumerate(values) if self._normalize(x) == target), None)
-            if index is None:
-                return await ctx.send("Parola/frase non trovata.")
-            removed = values.pop(index)
-        await ctx.send(f"Rimossa: `{removed}`")
+        values = self._read_dictionary_file(self.profanities_file, DEFAULT_PROFANITIES)
+        new_values = [x for x in values if self._normalize(x) != target]
+        if len(new_values) == len(values):
+            return await ctx.send("Parola/frase non trovata.")
+        try:
+            self._write_dictionary_file(
+                self.profanities_file,
+                new_values,
+                "# Una parolaccia / insulto per riga.\n# Da sola NON fa punteggio: serve sempre anche una voce di divinita.txt.",
+            )
+        except OSError as exc:
+            return await ctx.send(f"Errore scrittura file: `{exc}`")
+        await self._sync_files_to_all_guilds()
+        await ctx.send(f"Rimossa da `parolacce.txt`: `{term}`")
 
     @swear_profanities.command(name="reset")
     async def swear_profanities_reset(self, ctx: commands.Context):
-        await self.config.guild(ctx.guild).profanities.set(DEFAULT_PROFANITIES)
-        await ctx.send("Lista parolacce/insulti ripristinata.")
+        try:
+            self._write_dictionary_file(
+                self.profanities_file,
+                DEFAULT_PROFANITIES,
+                "# Una parolaccia / insulto per riga.\n# Da sola NON fa punteggio: serve sempre anche una voce di divinita.txt.",
+            )
+        except OSError as exc:
+            return await ctx.send(f"Errore scrittura file: `{exc}`")
+        await self._sync_files_to_all_guilds()
+        await ctx.send("`parolacce.txt` ripristinato.")
 
     @swearjar.group(name="channels", aliases=["canali"], invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)

@@ -40,20 +40,102 @@ class ActionButton(discord.ui.Button):
         await self.handler(interaction)
 
 
+class PrivacySelect(discord.ui.Select):
+    def __init__(self, cog):
+        self.cog = cog
+        options = [
+            discord.SelectOption(
+                label="Aperta",
+                value="open",
+                emoji="🔓",
+                description="Visibile e accessibile a tutti",
+            ),
+            discord.SelectOption(
+                label="Privata",
+                value="private",
+                emoji="🔒",
+                description="Visibile, ma l'accesso e' bloccato",
+            ),
+            discord.SelectOption(
+                label="Nascosta",
+                value="hidden",
+                emoji="🙈",
+                description="Non visibile e non accessibile",
+            ),
+        ]
+        super().__init__(
+            placeholder="Scegli la privacy della vocale",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="tempvoice:privacy_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        room = await self.cog.require_owned_room(interaction)
+        if room is None:
+            return
+
+        mode = self.values[0]
+        await self.cog.set_privacy(room, mode)
+        labels = {
+            "open": "🔓 Vocale impostata su **Aperta**.",
+            "private": "🔒 Vocale impostata su **Privata**.",
+            "hidden": "🙈 Vocale impostata su **Nascosta**.",
+        }
+        await interaction.response.edit_message(content=labels[mode], view=None)
+
+
+class PrivacyView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=60)
+        self.add_item(PrivacySelect(cog))
+
+
 class TempVoicePanel(tempvoice_module.TempVoicePanel):
-    """Pannello completo: pulsanti solo emoji + tutte le azioni mancanti."""
+    """Pannello completo in stile TempVoice: pulsanti emoji e menu privacy a tre stati."""
+
+    EMOJIS = {
+        "tempvoice:rename": "✏️",
+        "tempvoice:limit": "👥",
+        "tempvoice:trust": "🟢",
+        "tempvoice:block": "🚫",
+        "tempvoice:invite": "📨",
+        "tempvoice:kick": "📵",
+        "tempvoice:claim": "👑",
+        "tempvoice:transfer": "🔀",
+        "tempvoice:delete": "🗑️",
+    }
 
     def __init__(self, cog):
         super().__init__(cog)
+
+        # Rimuove il vecchio pulsante privacy a toggle: ora apre un menu a tendina
+        # con Aperta / Privata / Nascosta.
+        for item in list(self.children):
+            if getattr(item, "custom_id", None) == "tempvoice:privacy":
+                self.remove_item(item)
+
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.label = None
+                emoji = self.EMOJIS.get(getattr(item, "custom_id", None))
+                if emoji:
+                    item.emoji = emoji
 
-        self.add_item(ActionButton("👤", "tempvoice:untrust", 2, self._untrust))
+        self.add_item(ActionButton("🛡️", "tempvoice:privacy", 0, self._privacy))
+        self.add_item(ActionButton("🔇", "tempvoice:untrust", 2, self._untrust))
         self.add_item(ActionButton("🔓", "tempvoice:unblock", 2, self._unblock))
         self.add_item(ActionButton("🎚️", "tempvoice:bitrate", 2, self._bitrate))
-        self.add_item(ActionButton("♻️", "tempvoice:reset", 2, self._reset))
         self.add_item(ActionButton("ℹ️", "tempvoice:info", 2, self._info))
+
+    async def _privacy(self, interaction):
+        if await self.owned(interaction):
+            await interaction.response.send_message(
+                "🛡️ **Privacy vocale**\nScegli una delle tre modalita':",
+                view=PrivacyView(self.cog),
+                ephemeral=True,
+            )
 
     async def _untrust(self, interaction):
         if await self.owned(interaction):
@@ -71,28 +153,6 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
         if await self.owned(interaction):
             await interaction.response.send_modal(BitrateModal(self.cog))
 
-    async def _reset(self, interaction):
-        room = await self.owned(interaction)
-        if room is None:
-            return
-        owner = interaction.user
-        for target in list(room.overwrites):
-            if target not in {interaction.guild.default_role, interaction.guild.me, owner}:
-                try:
-                    await room.set_permissions(target, overwrite=None)
-                except discord.HTTPException:
-                    pass
-        # Reset = stanza nuovamente completamente nascosta a @everyone.
-        await room.set_permissions(interaction.guild.default_role, view_channel=False, connect=False)
-        await room.set_permissions(owner, view_channel=True, connect=True, speak=True, manage_channels=True, move_members=True)
-        observer = interaction.guild.get_role(await self.cog.config.guild(interaction.guild).observer_role())
-        if observer:
-            await room.set_permissions(observer, view_channel=True, connect=True)
-        info = await self.cog.room_info(room)
-        info.update({"privacy": "hidden", "trusted": [], "blocked": []})
-        await self.cog.save_room_info(room, info)
-        await interaction.response.send_message("Configurazione ripristinata: la vocale è di nuovo nascosta.", ephemeral=True)
-
     async def _info(self, interaction):
         room = await self.cog.get_user_room(interaction.guild, interaction.user)
         if room is None:
@@ -100,10 +160,11 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
         info = await self.cog.room_info(room)
         owner = interaction.guild.get_member(int(info.get("owner_id", 0)))
         created = int(info.get("created_at", 0))
+        privacy_labels = {"open": "Aperta", "private": "Privata", "hidden": "Nascosta"}
         await interaction.response.send_message(
             f"**Vocale:** {room.mention}\n"
             f"**Proprietario:** {owner.mention if owner else info.get('owner_id')}\n"
-            f"**Privacy:** `{info.get('privacy', 'hidden')}`\n"
+            f"**Privacy:** `{privacy_labels.get(info.get('privacy'), 'Nascosta')}`\n"
             f"**Limite:** `{room.user_limit or 'nessuno'}`\n"
             f"**Bitrate:** `{room.bitrate // 1000} kbps`\n"
             f"**Fidati:** `{len(info.get('trusted', []))}` | **Bloccati:** `{len(info.get('blocked', []))}`\n"
@@ -239,27 +300,49 @@ if panel_command is not None:
     async def panel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await interaction.response.defer(ephemeral=True)
         embed = discord.Embed(
-            title="Gestione vocale temporanea",
+            title="TempVoice Interface",
             description=(
-                "Entra nella tua vocale temporanea e usa i pulsanti qui sotto.\n\n"
-                "✏️ **Rinomina** — cambia il nome della stanza\n"
-                "👥 **Limite** — imposta il numero massimo di utenti\n"
-                "🔒 **Privacy** — apre o blocca la stanza\n"
-                "🙋 **Fidati** — autorizza sempre un utente\n"
-                "🚫 **Blocca** — nasconde e impedisce l'accesso a un utente\n"
-                "📨 **Invita** — invia in DM un invito alla stanza\n"
-                "🥾 **Espelli** — rimuove un utente dalla stanza\n"
-                "👑 **Rivendica** — prende la proprieta' se il proprietario non c'e'\n"
-                "🔁 **Trasferisci** — passa la proprieta' a un altro utente\n"
-                "🗑️ **Elimina** — elimina la tua stanza\n"
-                "👤 **Sfiducia** — rimuove un utente dai fidati\n"
-                "🔓 **Sblocca** — rimuove un utente dai bloccati\n"
-                "🎚️ **Bitrate** — modifica la qualita' audio\n"
-                "♻️ **Reset** — ripristina la stanza come nascosta\n"
-                "ℹ️ **Info** — mostra proprietario e configurazione"
+                "Questa interfaccia puo' essere usata per gestire i canali vocali temporanei. "
+                "Altre opzioni sono disponibili tramite i comandi **/voice**."
             ),
             colour=discord.Colour.blurple(),
         )
+
+        # Tre colonne inline rendono la legenda molto piu' orizzontale e vicina
+        # all'aspetto del pannello TempVoice originale.
+        embed.add_field(
+            name="Gestione",
+            value=(
+                "✏️ **Rinomina** — cambia nome\n"
+                "👥 **Limita** — limite utenti\n"
+                "🛡️ **Privacy** — aperta/privata/nascosta\n"
+                "🟢 **Fidati** — autorizza utente\n"
+                "🔇 **Sfiducia** — rimuove fidato"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Accesso",
+            value=(
+                "📨 **Invita** — invito in DM\n"
+                "📵 **Espelli** — rimuove utente\n"
+                "🚫 **Blocca** — nega accesso\n"
+                "🔓 **Sblocca** — rimuove blocco\n"
+                "👑 **Rivendica** — prende proprieta'"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="Stanza",
+            value=(
+                "🔀 **Trasferisci** — cambia proprietario\n"
+                "🎚️ **Bitrate** — qualita' audio\n"
+                "🗑️ **Elimina** — elimina stanza\n"
+                "ℹ️ **Info** — mostra configurazione"
+            ),
+            inline=True,
+        )
+
         msg = await channel.send(embed=embed, view=TempVoicePanel(self))
         cfg = self.config.guild(interaction.guild)
         await cfg.panel_channel.set(channel.id)

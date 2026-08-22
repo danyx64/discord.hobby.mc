@@ -1,7 +1,12 @@
+import logging
+from datetime import datetime, timezone
+
 import discord
 
 from . import tempvoice as tempvoice_module
 from .tempvoice import TempVoice, UserActionView
+
+log = logging.getLogger("red.danyx64.tempvoice")
 
 
 class BitrateModal(discord.ui.Modal, title="Bitrate vocale"):
@@ -26,41 +31,45 @@ class BitrateModal(discord.ui.Modal, title="Bitrate vocale"):
         await interaction.response.send_message(f"Bitrate impostato a **{value // 1000} kbps**.", ephemeral=True)
 
 
+class ActionButton(discord.ui.Button):
+    def __init__(self, emoji, custom_id, row, handler, style=discord.ButtonStyle.secondary):
+        # Solo emoji: la spiegazione e' nell'embed, come richiesto.
+        super().__init__(emoji=emoji, style=style, custom_id=custom_id, row=row)
+        self.handler = handler
+
+    async def callback(self, interaction):
+        await self.handler(interaction)
+
+
 class TempVoicePanel(tempvoice_module.TempVoicePanel):
-    """Pannello completo in stile TempVoice, con etichette leggibili e tutte le azioni."""
+    """Pannello completo: pulsanti solo emoji + tutte le azioni mancanti."""
 
     def __init__(self, cog):
         super().__init__(cog)
-        labels = {
-            "tempvoice:rename": "Rinomina",
-            "tempvoice:limit": "Limite",
-            "tempvoice:privacy": "Privacy",
-            "tempvoice:trust": "Fidati",
-            "tempvoice:block": "Blocca",
-            "tempvoice:invite": "Invita",
-            "tempvoice:kick": "Espelli",
-            "tempvoice:claim": "Rivendica",
-            "tempvoice:transfer": "Trasferisci",
-            "tempvoice:delete": "Elimina",
-        }
-        for item in self.children:
-            if getattr(item, "custom_id", None) in labels:
-                item.label = labels[item.custom_id]
 
-        # Funzioni presenti nei comandi /voice ma mancanti dalla vecchia pulsantiera.
-        self.add_item(ActionButton("Sfiducia", "👤", "tempvoice:untrust", 2, self._untrust))
-        self.add_item(ActionButton("Sblocca", "🔓", "tempvoice:unblock", 2, self._unblock))
-        self.add_item(ActionButton("Bitrate", "🎚️", "tempvoice:bitrate", 2, self._bitrate))
-        self.add_item(ActionButton("Reset", "♻️", "tempvoice:reset", 2, self._reset))
-        self.add_item(ActionButton("Info", "ℹ️", "tempvoice:info", 2, self._info))
+        # Rimuove qualsiasi label eventualmente ereditata da vecchie versioni.
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.label = None
+
+        # Funzioni presenti nei comandi /voice ma mancanti dalla pulsantiera base.
+        self.add_item(ActionButton("👤", "tempvoice:untrust", 2, self._untrust))
+        self.add_item(ActionButton("🔓", "tempvoice:unblock", 2, self._unblock))
+        self.add_item(ActionButton("🎚️", "tempvoice:bitrate", 2, self._bitrate))
+        self.add_item(ActionButton("♻️", "tempvoice:reset", 2, self._reset))
+        self.add_item(ActionButton("ℹ️", "tempvoice:info", 2, self._info))
 
     async def _untrust(self, interaction):
         if await self.owned(interaction):
-            await interaction.response.send_message("Scegli chi rimuovere dai fidati:", view=UserActionView(self.cog, "untrust"), ephemeral=True)
+            await interaction.response.send_message(
+                "Scegli chi rimuovere dai fidati:", view=UserActionView(self.cog, "untrust"), ephemeral=True
+            )
 
     async def _unblock(self, interaction):
         if await self.owned(interaction):
-            await interaction.response.send_message("Scegli chi sbloccare:", view=UserActionView(self.cog, "unblock"), ephemeral=True)
+            await interaction.response.send_message(
+                "Scegli chi sbloccare:", view=UserActionView(self.cog, "unblock"), ephemeral=True
+            )
 
     async def _bitrate(self, interaction):
         if await self.owned(interaction):
@@ -106,17 +115,190 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
         )
 
 
-class ActionButton(discord.ui.Button):
-    def __init__(self, label, emoji, custom_id, row, handler):
-        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.secondary, custom_id=custom_id, row=row)
-        self.handler = handler
+async def robust_create_room(self, member: discord.Member):
+    """Crea e sposta nella stanza, registrando sempre il motivo di eventuali fallimenti."""
+    guild = member.guild
+    cfg = self.config.guild(guild)
+    category_id = await cfg.category_id()
+    category = guild.get_channel(category_id)
 
-    async def callback(self, interaction):
-        await self.handler(interaction)
+    if not isinstance(category, discord.CategoryChannel):
+        log.error(
+            "[TempVoice] Creazione fallita per %s (%s): category_id=%s non e' una categoria valida",
+            member,
+            member.id,
+            category_id,
+        )
+        return None
+
+    me = guild.me
+    if me is None:
+        log.error("[TempVoice] Creazione fallita: guild.me non disponibile")
+        return None
+
+    category_perms = category.permissions_for(me)
+    missing = []
+    if not category_perms.view_channel:
+        missing.append("View Channel")
+    if not category_perms.manage_channels:
+        missing.append("Manage Channels")
+    if not category_perms.connect:
+        missing.append("Connect")
+    if not category_perms.move_members:
+        missing.append("Move Members")
+    if missing:
+        log.error(
+            "[TempVoice] Permessi mancanti nella categoria %s (%s): %s",
+            category.name,
+            category.id,
+            ", ".join(missing),
+        )
+        return None
+
+    observer_id = await cfg.observer_role()
+    observer = guild.get_role(observer_id) if observer_id else None
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=False),
+        member: discord.PermissionOverwrite(
+            view_channel=True, connect=True, speak=True, manage_channels=True, move_members=True
+        ),
+        me: discord.PermissionOverwrite(
+            view_channel=True, connect=True, manage_channels=True, move_members=True
+        ),
+    }
+    if observer:
+        overwrites[observer] = discord.PermissionOverwrite(view_channel=True, connect=True)
+
+    bitrate = max(8000, min(int(await cfg.default_bitrate()), guild.bitrate_limit))
+    try:
+        room = await guild.create_voice_channel(
+            self.format_name(await cfg.name_template(), member),
+            category=category,
+            overwrites=overwrites,
+            user_limit=max(0, min(int(await cfg.default_limit()), 99)),
+            bitrate=bitrate,
+            reason=f"TempVoice created for {member}",
+        )
+    except discord.Forbidden as exc:
+        log.exception("[TempVoice] 403 durante creazione vocale per %s: %s", member, exc)
+        return None
+    except discord.HTTPException as exc:
+        log.exception("[TempVoice] Errore HTTP durante creazione vocale per %s: %s", member, exc)
+        return None
+
+    await self.save_room_info(
+        room,
+        {
+            "owner_id": member.id,
+            "created_at": int(datetime.now(timezone.utc).timestamp()),
+            "privacy": "private",
+            "trusted": [],
+            "blocked": [],
+        },
+    )
+    log.info("[TempVoice] Creata %s (%s) per %s (%s)", room.name, room.id, member, member.id)
+
+    try:
+        await member.move_to(room, reason="TempVoice join-to-create")
+        log.info("[TempVoice] Spostato %s (%s) in %s (%s)", member, member.id, room.name, room.id)
+        return room
+    except discord.Forbidden as exc:
+        log.exception("[TempVoice] 403 durante lo spostamento di %s: %s", member, exc)
+    except discord.HTTPException as exc:
+        log.exception("[TempVoice] Errore HTTP durante lo spostamento di %s: %s", member, exc)
+
+    await self.delete_room(room)
+    return None
 
 
-# Sostituisce il pannello nel modulo originale: anche /voice panel usera' questa versione.
+# Usa sempre la versione diagnostica per il join-to-create.
+TempVoice.create_room = robust_create_room
+# Fa usare al comando /voice panel questa View emoji-only.
 tempvoice_module.TempVoicePanel = TempVoicePanel
+
+
+# Migliora /voice panel: risposta immediata (evita Unknown interaction) + legenda completa.
+panel_command = TempVoice.voice.get_command("panel")
+if panel_command is not None:
+    async def panel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+        embed = discord.Embed(
+            title="Gestione vocale temporanea",
+            description=(
+                "Entra nella tua vocale temporanea e usa i pulsanti qui sotto.\n\n"
+                "✏️ **Rinomina** — cambia il nome della stanza\n"
+                "👥 **Limite** — imposta il numero massimo di utenti\n"
+                "🔒 **Privacy** — apre o blocca la stanza\n"
+                "🙋 **Fidati** — autorizza sempre un utente\n"
+                "🚫 **Blocca** — nasconde e impedisce l'accesso a un utente\n"
+                "📨 **Invita** — invia in DM un invito alla stanza\n"
+                "🥾 **Espelli** — rimuove un utente dalla stanza\n"
+                "👑 **Rivendica** — prende la proprieta' se il proprietario non c'e'\n"
+                "🔁 **Trasferisci** — passa la proprieta' a un altro utente\n"
+                "🗑️ **Elimina** — elimina la tua stanza\n"
+                "👤 **Sfiducia** — rimuove un utente dai fidati\n"
+                "🔓 **Sblocca** — rimuove un utente dai bloccati\n"
+                "🎚️ **Bitrate** — modifica la qualita' audio\n"
+                "♻️ **Reset** — ripristina permessi e impostazioni\n"
+                "ℹ️ **Info** — mostra proprietario e configurazione"
+            ),
+            colour=discord.Colour.blurple(),
+        )
+        msg = await channel.send(embed=embed, view=TempVoicePanel(self))
+        cfg = self.config.guild(interaction.guild)
+        await cfg.panel_channel.set(channel.id)
+        await cfg.panel_message.set(msg.id)
+        await interaction.followup.send(f"Pannello inviato in {channel.mention}.", ephemeral=True)
+
+    panel_command._callback = panel_callback
+
+
+# Estende /voice status con una diagnosi pratica del join-to-create.
+status_command = TempVoice.voice.get_command("status")
+if status_command is not None:
+    async def status_callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        cfg = self.config.guild(guild)
+        enabled = await cfg.enabled()
+        creator_id = await cfg.creator_channel()
+        category_id = await cfg.category_id()
+        creator = guild.get_channel(creator_id)
+        category = guild.get_channel(category_id)
+        observer = guild.get_role(await cfg.observer_role())
+        rooms = await cfg.rooms()
+        me = guild.me
+
+        checks = []
+        checks.append(f"{'✅' if enabled else '❌'} TempVoice abilitato")
+        checks.append(f"{'✅' if isinstance(creator, discord.VoiceChannel) else '❌'} Vocale creatore valida (`{creator_id}`)")
+        checks.append(f"{'✅' if isinstance(category, discord.CategoryChannel) else '❌'} Categoria valida (`{category_id}`)")
+
+        if isinstance(category, discord.CategoryChannel) and me:
+            perms = category.permissions_for(me)
+            for label, value in (
+                ("View Channel", perms.view_channel),
+                ("Manage Channels", perms.manage_channels),
+                ("Connect", perms.connect),
+                ("Move Members", perms.move_members),
+            ):
+                checks.append(f"{'✅' if value else '❌'} Bot: {label}")
+
+        embed = discord.Embed(title="TempVoice - stato e diagnostica", colour=discord.Colour.blurple())
+        embed.add_field(name="Configurazione", value="\n".join(checks), inline=False)
+        embed.add_field(
+            name="Dettagli",
+            value=(
+                f"**Creatore:** {getattr(creator, 'mention', 'non configurato')}\n"
+                f"**Categoria:** **{getattr(category, 'name', 'non configurata')}**\n"
+                f"**Template:** `{await cfg.name_template()}`\n"
+                f"**Ruolo osservatore:** {observer.mention if observer else 'nessuno'}\n"
+                f"**Vocali attive:** **{len(rooms)}**"
+            ),
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    status_command._callback = status_callback
 
 
 async def setup(bot):

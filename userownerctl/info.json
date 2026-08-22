@@ -1,0 +1,9 @@
+{
+  "author": ["danyx64"],
+  "description": "Owner-only console for users known through app interactions and normal Discord visibility.",
+  "install_msg": "Load with [p]load userownerctl. Commands are under [p]uoc and are owner-only.",
+  "short": "Owner control for known app users",
+  "requirements": [],
+  "tags": ["owner", "user-install", "control", "discord"],
+  "min_bot_version": "3.5.0"
+}

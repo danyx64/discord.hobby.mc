@@ -31,6 +31,59 @@ class BitrateModal(discord.ui.Modal, title="Bitrate vocale"):
         await interaction.response.send_message(f"Bitrate impostato a **{value // 1000} kbps**.", ephemeral=True)
 
 
+class PrivacySelect(discord.ui.Select):
+    def __init__(self, cog):
+        self.cog = cog
+        options = [
+            discord.SelectOption(
+                label="Aperta",
+                value="open",
+                emoji="🌐",
+                description="Tutti possono vedere ed entrare nella vocale.",
+            ),
+            discord.SelectOption(
+                label="Bloccata",
+                value="private",
+                emoji="🔒",
+                description="La vocale è visibile, ma gli altri non possono entrare.",
+            ),
+            discord.SelectOption(
+                label="Nascosta",
+                value="hidden",
+                emoji="👻",
+                description="Gli altri non possono vedere né entrare nella vocale.",
+            ),
+        ]
+        super().__init__(
+            placeholder="Scegli la modalità privacy",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        room = await self.cog.require_owned_room(interaction)
+        if room is None:
+            return
+        mode = self.values[0]
+        await self.cog.set_privacy(room, mode)
+        labels = {
+            "open": "🌐 Aperta",
+            "private": "🔒 Bloccata",
+            "hidden": "👻 Nascosta",
+        }
+        await interaction.response.edit_message(
+            content=f"Privacy impostata su **{labels[mode]}**.",
+            view=None,
+        )
+
+
+class PrivacyView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=60)
+        self.add_item(PrivacySelect(cog))
+
+
 class ActionButton(discord.ui.Button):
     def __init__(self, emoji, custom_id, row, handler, style=discord.ButtonStyle.secondary):
         super().__init__(emoji=emoji, style=style, custom_id=custom_id, row=row)
@@ -45,15 +98,40 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
 
     def __init__(self, cog):
         super().__init__(cog)
+
+        # Rimuove il vecchio pulsante privacy, che faceva solo toggle open/private.
+        for item in list(self.children):
+            if getattr(item, "custom_id", None) == "tempvoice:privacy":
+                self.remove_item(item)
+
+        # Tutti i pulsanti rimangono solo emoji.
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.label = None
+
+        # Privacy con scelta tra Aperta / Bloccata / Nascosta.
+        self.add_item(ActionButton("🔒", "tempvoice:privacy-menu", 0, self._privacy))
 
         self.add_item(ActionButton("👤", "tempvoice:untrust", 2, self._untrust))
         self.add_item(ActionButton("🔓", "tempvoice:unblock", 2, self._unblock))
         self.add_item(ActionButton("🎚️", "tempvoice:bitrate", 2, self._bitrate))
         self.add_item(ActionButton("♻️", "tempvoice:reset", 2, self._reset))
         self.add_item(ActionButton("ℹ️", "tempvoice:info", 2, self._info))
+
+    async def _privacy(self, interaction):
+        if await self.owned(interaction):
+            info = await self.cog.room_info(await self.cog.get_user_room(interaction.guild, interaction.user))
+            current = info.get("privacy", "hidden")
+            current_labels = {
+                "open": "🌐 Aperta",
+                "private": "🔒 Bloccata",
+                "hidden": "👻 Nascosta",
+            }
+            await interaction.response.send_message(
+                f"**Privacy attuale:** {current_labels.get(current, current)}\nScegli la nuova modalità:",
+                view=PrivacyView(self.cog),
+                ephemeral=True,
+            )
 
     async def _untrust(self, interaction):
         if await self.owned(interaction):
@@ -82,7 +160,6 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
                     await room.set_permissions(target, overwrite=None)
                 except discord.HTTPException:
                     pass
-        # Reset = stanza nuovamente completamente nascosta a @everyone.
         await room.set_permissions(interaction.guild.default_role, view_channel=False, connect=False)
         await room.set_permissions(owner, view_channel=True, connect=True, speak=True, manage_channels=True, move_members=True)
         observer = interaction.guild.get_role(await self.cog.config.guild(interaction.guild).observer_role())
@@ -155,7 +232,6 @@ async def robust_create_room(self, member: discord.Member):
     observer_id = await cfg.observer_role()
     observer = guild.get_role(observer_id) if observer_id else None
     overwrites = {
-        # Anche sotto una categoria pubblica, la stanza nasce completamente invisibile.
         guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
         member: discord.PermissionOverwrite(
             view_channel=True, connect=True, speak=True, manage_channels=True, move_members=True
@@ -225,9 +301,6 @@ async def _admin_only(interaction: discord.Interaction) -> bool:
     return False
 
 
-# Comandi amministrativi: setup/panel/enable/disable/template/status.
-# I sottocomandi di uno stesso slash group non possono essere nascosti in modo affidabile
-# singolarmente da Discord, quindi vengono sempre protetti anche lato bot.
 for admin_name in ("setup", "panel", "enable", "disable", "template", "status"):
     cmd = TempVoice.voice.get_command(admin_name)
     if cmd is not None:
@@ -244,7 +317,7 @@ if panel_command is not None:
                 "Entra nella tua vocale temporanea e usa i pulsanti qui sotto.\n\n"
                 "✏️ **Rinomina** — cambia il nome della stanza\n"
                 "👥 **Limite** — imposta il numero massimo di utenti\n"
-                "🔒 **Privacy** — apre o blocca la stanza\n"
+                "🔒 **Privacy** — scegli Aperta, Bloccata o Nascosta\n"
                 "🙋 **Fidati** — autorizza sempre un utente\n"
                 "🚫 **Blocca** — nasconde e impedisce l'accesso a un utente\n"
                 "📨 **Invita** — invia in DM un invito alla stanza\n"

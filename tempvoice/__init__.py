@@ -298,12 +298,10 @@ if panel_command is not None:
             description=(
                 "Questa interfaccia puo' essere usata per gestire i canali vocali temporanei. "
                 "Altre opzioni sono disponibili tramite i comandi **/voice**.\n\n"
-                "```\n"
-                "✏️ RINOMINA      👥 LIMITA       🛡️ PRIVACY      🟢 FIDATI\n"
-                "🔇 SFIDUCIA     📨 INVITA       📵 ESPELLI      🚫 BLOCCA\n"
-                "🔓 SBLOCCA      👑 RIVENDICA    🔀 TRASFERISCI  🎚️ QUALITA\n"
-                "🗑️ ELIMINA      ℹ️ INFO\n"
-                "```"
+                "`✏️ RINOMINA`  `👥 LIMITA`  `🛡️ PRIVACY`  `🟢 FIDATI`\n"
+                "`🔇 SFIDUCIA`  `📨 INVITA`  `📵 ESPELLI`  `🚫 BLOCCA`\n"
+                "`🔓 SBLOCCA`  `👑 RIVENDICA`  `🔀 TRASFERISCI`\n"
+                "`🎚️ QUALITA`  `🗑️ ELIMINA`  `ℹ️ INFO`"
             ),
             colour=discord.Colour.blurple(),
         )

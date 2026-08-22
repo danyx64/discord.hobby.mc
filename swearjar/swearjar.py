@@ -7,54 +7,51 @@ from redbot.core import Config, commands
 from redbot.core.bot import Red
 
 
-DEFAULT_WORDS = [
-    "porco dio",
-    "dio cane",
-    "dio porco",
-    "madonna puttana",
-    "cazzo",
-    "merda",
-    "stronzo",
-    "stronza",
-    "vaffanculo",
-    "fanculo",
-    "coglione",
-    "cogliona",
-    "coglioni",
-    "testa di cazzo",
-    "figlio di puttana",
-    "figlia di puttana",
-    "puttana",
-    "troia",
-    "bastardo",
-    "bastarda",
+DEFAULT_DEITIES = [
+    "dio", "gesu", "gesu cristo", "cristo", "madonna", "allah",
+    "signore", "padre eterno", "spirito santo", "vergine maria", "maria",
 ]
 
-# Questi termini, da soli, non devono mai fare punteggio.
-STANDALONE_IGNORED = {
-    "dio",
-    "gesu",
-    "gesu cristo",
-    "allah",
-    "madonna",
-    "cristo",
-}
+# Lista moderazione: da sola NON fa punteggio. Serve sempre anche una divinita'.
+DEFAULT_PROFANITIES = [
+    "cazzo", "cazzi", "cazzone", "cazzata", "cazzate", "minchia", "minchione",
+    "merda", "merde", "stronzo", "stronza", "stronzi", "stronze",
+    "vaffanculo", "fanculo", "affanculo", "fottiti", "fottere", "fottuto", "fottuta",
+    "coglione", "cogliona", "coglioni", "coglionazzo", "coglionata",
+    "puttana", "puttane", "troia", "troie", "zoccola", "zoccole",
+    "bastardo", "bastarda", "bastardi", "bastarde", "figlio di puttana", "figlia di puttana",
+    "testa di cazzo", "pezzo di merda", "faccia di merda", "rompicoglioni",
+    "porco", "porca", "porci", "porche", "cane", "cagna", "maiale", "maiala",
+    "idiota", "imbecille", "deficiente", "cretino", "cretina", "scemo", "scema",
+    "ritardato", "ritardata", "mongoloide", "mongolo", "mongola", "down",
+    "negro", "negra", "negri", "negre", "nigger", "nigga",
+    "frocio", "frocia", "froci", "finocchio", "ricchione", "checca",
+    "terrone", "terrona", "terroni", "zingaro", "zingara", "zingari", "rom di merda",
+    "handicappato", "handicappata", "minorato", "minorata",
+    "suca", "succhia", "succhiami", "inculato", "inculata", "inculare",
+    "culo", "culone", "palle", "pallone", "pisello", "fica", "figa", "fessa",
+    "mignotta", "bagascia", "baldracca", "vacca", "cesso", "cacata", "cagata",
+    "fuck", "fucking", "fucker", "motherfucker", "shit", "bullshit", "asshole",
+    "bitch", "slut", "whore", "dick", "cock", "cunt", "prick", "retard",
+]
 
 DEFAULT_REPLY = "{mention} ha bestemmiato per la {count}ª volta."
 
 
 class SwearJar(commands.Cog):
-    """Conta bestemmie/parolacce, risponde al messaggio e mostra una leaderboard."""
+    """Conta solo messaggi che contengono sia una divinita' sia una parolaccia."""
 
     __author__ = "danyx64"
-    __version__ = "1.1.0"
+    __version__ = "2.0.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=927315640118477221, force_registration=True)
         self.config.register_guild(
             enabled=True,
-            words=DEFAULT_WORDS,
+            words=[],  # mantenuto per compatibilita' con vecchie config
+            deities=DEFAULT_DEITIES,
+            profanities=DEFAULT_PROFANITIES,
             reply_message=DEFAULT_REPLY,
             channel_mode="all",
             channels=[],
@@ -62,47 +59,51 @@ class SwearJar(commands.Cog):
         self.config.register_member(count=0)
 
     async def cog_load(self):
-        # Migrazione automatica dalle vecchie configurazioni: rimuove i nomi
-        # religiosi che erano stati salvati come trigger autonomi.
-        ignored = {self._normalize(term) for term in STANDALONE_IGNORED}
+        # Se la nuova configurazione e' vuota, ripristina i dizionari moderni.
         for guild in self.bot.guilds:
-            words = await self.config.guild(guild).words()
-            filtered = [word for word in words if self._normalize(word) not in ignored]
-            if filtered != words:
-                await self.config.guild(guild).words.set(filtered)
+            if not await self.config.guild(guild).deities():
+                await self.config.guild(guild).deities.set(DEFAULT_DEITIES)
+            if not await self.config.guild(guild).profanities():
+                await self.config.guild(guild).profanities.set(DEFAULT_PROFANITIES)
 
     @staticmethod
     def _normalize(text: str) -> str:
         text = unicodedata.normalize("NFKD", text.casefold())
         text = "".join(ch for ch in text if not unicodedata.combining(ch))
-        text = re.sub(r"[^a-z0-9]+", " ", text)
+        text = text.translate(str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t"}))
+        text = re.sub(r"[^a-z]+", " ", text)
         return re.sub(r"\s+", " ", text).strip()
-
-    @staticmethod
-    def _raw_normalize(text: str) -> str:
-        """Lowercase + rimozione accenti, mantenendo i separatori per il matcher."""
-        text = unicodedata.normalize("NFKD", text.casefold())
-        return "".join(ch for ch in text if not unicodedata.combining(ch))
 
     @classmethod
     def _contains_term(cls, content: str, term: str) -> bool:
+        content_n = cls._normalize(content)
         term_n = cls._normalize(term)
-        if not term_n or term_n in {cls._normalize(x) for x in STANDALONE_IGNORED}:
+        if not term_n:
             return False
-
-        content_raw = cls._raw_normalize(content)
         tokens = term_n.split()
+        pattern = r"(?<![a-z])" + r"\s*".join(re.escape(token) for token in tokens) + r"(?![a-z])"
+        return re.search(pattern, content_n) is not None
 
-        # Una frase configurata viene riconosciuta sia separata che attaccata:
-        # "porco dio", "porcodio", "porco-dio", "porco.dio", ecc.
-        if len(tokens) > 1:
-            pattern = r"(?<![a-z0-9])" + r"[^a-z0-9]*".join(re.escape(token) for token in tokens) + r"(?![a-z0-9])"
-            return re.search(pattern, content_raw, flags=re.IGNORECASE) is not None
+    @classmethod
+    def _find_violation(cls, content: str, deities: List[str], profanities: List[str]):
+        deity = next((d for d in deities if cls._contains_term(content, d)), None)
+        profanity = next((p for p in profanities if cls._contains_term(content, p)), None)
+        if deity and profanity:
+            return deity, profanity
 
-        # Per una singola parolaccia manteniamo i confini di parola per evitare
-        # falsi positivi dentro parole innocue.
-        token = re.escape(tokens[0])
-        return re.search(rf"(?<![a-z0-9]){token}(?![a-z0-9])", content_raw, flags=re.IGNORECASE) is not None
+        # Secondo passaggio per forme attaccate tipo "porcodio", "diocane", ecc.
+        compact = cls._normalize(content).replace(" ", "")
+        for d in deities:
+            d_n = cls._normalize(d).replace(" ", "")
+            if not d_n:
+                continue
+            for p in profanities:
+                p_n = cls._normalize(p).replace(" ", "")
+                if not p_n:
+                    continue
+                if d_n + p_n in compact or p_n + d_n in compact:
+                    return d, p
+        return None
 
     async def _channel_allowed(self, guild: discord.Guild, channel_id: int) -> bool:
         mode = await self.config.guild(guild).channel_mode()
@@ -124,10 +125,12 @@ class SwearJar(commands.Cog):
         if not await self._channel_allowed(message.guild, message.channel.id):
             return
 
-        words = await self.config.guild(message.guild).words()
-        matched = next((word for word in words if self._contains_term(message.content, word)), None)
+        deities = await self.config.guild(message.guild).deities()
+        profanities = await self.config.guild(message.guild).profanities()
+        matched = self._find_violation(message.content, deities, profanities)
         if matched is None:
             return
+        deity, profanity = matched
 
         member_group = self.config.member(message.author)
         current = await member_group.count()
@@ -142,7 +145,9 @@ class SwearJar(commands.Cog):
             displayname=message.author.display_name,
             user_id=message.author.id,
             count=new_count,
-            word=matched,
+            word=f"{deity} + {profanity}",
+            deity=deity,
+            profanity=profanity,
             channel=getattr(message.channel, "mention", f"#{message.channel}"),
             guild=message.guild.name,
             server=message.guild.name,
@@ -155,135 +160,151 @@ class SwearJar(commands.Cog):
     @commands.group(name="swearjar", aliases=["swear"], invoke_without_command=True)
     @commands.guild_only()
     async def swearjar(self, ctx: commands.Context):
-        """Configura il contatore di bestemmie/parolacce."""
+        """Configura il contatore bestemmie: divinita' + parolaccia."""
         await ctx.send_help(ctx.command)
 
     @swearjar.command(name="enable")
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_enable(self, ctx: commands.Context):
-        """Abilita il controllo dei messaggi."""
         await self.config.guild(ctx.guild).enabled.set(True)
         await ctx.send("SwearJar abilitato.")
 
     @swearjar.command(name="disable")
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_disable(self, ctx: commands.Context):
-        """Disabilita il controllo dei messaggi."""
         await self.config.guild(ctx.guild).enabled.set(False)
         await ctx.send("SwearJar disabilitato.")
 
     @swearjar.command(name="status")
     async def swear_status(self, ctx: commands.Context):
-        """Mostra configurazione attuale e numero di parole controllate."""
         enabled = await self.config.guild(ctx.guild).enabled()
         mode = await self.config.guild(ctx.guild).channel_mode()
         channels = await self.config.guild(ctx.guild).channels()
-        words = await self.config.guild(ctx.guild).words()
+        deities = await self.config.guild(ctx.guild).deities()
+        profanities = await self.config.guild(ctx.guild).profanities()
         await ctx.send(
             f"Stato: **{'attivo' if enabled else 'disattivato'}**\n"
-            f"Modalità canali: **{mode}**\n"
-            f"Canali configurati: `{len(channels)}`\n"
-            f"Parole/frasi controllate: `{len(words)}`"
+            f"Regola: **serve sempre divinita' + parolaccia nello stesso messaggio**\n"
+            f"Divinita': `{len(deities)}` | Parolacce/insulti: `{len(profanities)}`\n"
+            f"Modalita' canali: **{mode}** | Canali configurati: `{len(channels)}`"
         )
 
     @swearjar.group(name="message", invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_message(self, ctx: commands.Context):
-        """Visualizza o modifica il messaggio di risposta."""
         await ctx.send_help(ctx.command)
 
     @swear_message.command(name="view")
     async def swear_message_view(self, ctx: commands.Context):
-        """Mostra il messaggio automatico impostato."""
         value = await self.config.guild(ctx.guild).reply_message()
         await ctx.send(f"Messaggio attuale:\n```\n{value}\n```")
 
     @swear_message.command(name="set")
     async def swear_message_set(self, ctx: commands.Context, *, text: str):
-        """Imposta la risposta automatica inviata al messaggio rilevato."""
         await self.config.guild(ctx.guild).reply_message.set(text[:2000])
         await ctx.send("Messaggio aggiornato.")
 
     @swear_message.command(name="reset")
     async def swear_message_reset(self, ctx: commands.Context):
-        """Ripristina `{mention} ha bestemmiato per la {count}ª volta.`"""
         await self.config.guild(ctx.guild).reply_message.set(DEFAULT_REPLY)
         await ctx.send("Messaggio ripristinato.")
 
     @swear_message.command(name="usage")
     async def swear_message_usage(self, ctx: commands.Context):
-        """Mostra i placeholder disponibili nel messaggio."""
         await ctx.send(
             "Placeholder: `{mention}`, `{user}`, `{username}`, `{displayname}`, `{user_id}`, "
-            "`{count}`, `{word}`, `{channel}`, `{guild}`, `{server}`."
+            "`{count}`, `{word}`, `{deity}`, `{profanity}`, `{channel}`, `{guild}`, `{server}`."
         )
 
-    @swearjar.group(name="words", aliases=["parole"], invoke_without_command=True)
+    @swearjar.group(name="deities", aliases=["divinita"], invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
-    async def swear_words(self, ctx: commands.Context):
-        """Gestisce bestemmie e parolacce rilevate."""
+    async def swear_deities(self, ctx: commands.Context):
         await ctx.send_help(ctx.command)
 
-    @swear_words.command(name="list")
-    async def swear_words_list(self, ctx: commands.Context):
-        """Elenca tutte le parole/frasi controllate."""
-        words = await self.config.guild(ctx.guild).words()
-        if not words:
-            return await ctx.send("Nessuna parola configurata.")
-        text = "\n".join(f"`{i}.` {word}" for i, word in enumerate(words, 1))
+    @swear_deities.command(name="list")
+    async def swear_deities_list(self, ctx: commands.Context):
+        values = await self.config.guild(ctx.guild).deities()
+        await ctx.send("Divinita': " + ", ".join(f"`{x}`" for x in values))
+
+    @swear_deities.command(name="add")
+    async def swear_deities_add(self, ctx: commands.Context, *, term: str):
+        term = term.strip()
+        if not term:
+            return await ctx.send("Inserisci un termine.")
+        async with self.config.guild(ctx.guild).deities() as values:
+            if self._normalize(term) in {self._normalize(x) for x in values}:
+                return await ctx.send("Gia' presente.")
+            values.append(term)
+        await ctx.send(f"Divinita' aggiunta: `{term}`")
+
+    @swear_deities.command(name="remove")
+    async def swear_deities_remove(self, ctx: commands.Context, *, term: str):
+        target = self._normalize(term)
+        async with self.config.guild(ctx.guild).deities() as values:
+            index = next((i for i, x in enumerate(values) if self._normalize(x) == target), None)
+            if index is None:
+                return await ctx.send("Non trovata.")
+            removed = values.pop(index)
+        await ctx.send(f"Rimossa: `{removed}`")
+
+    @swear_deities.command(name="reset")
+    async def swear_deities_reset(self, ctx: commands.Context):
+        await self.config.guild(ctx.guild).deities.set(DEFAULT_DEITIES)
+        await ctx.send("Lista divinita' ripristinata.")
+
+    @swearjar.group(name="profanities", aliases=["words", "parole", "parolacce"], invoke_without_command=True)
+    @commands.admin_or_permissions(manage_guild=True)
+    async def swear_profanities(self, ctx: commands.Context):
+        await ctx.send_help(ctx.command)
+
+    @swear_profanities.command(name="list")
+    async def swear_profanities_list(self, ctx: commands.Context):
+        values = await self.config.guild(ctx.guild).profanities()
+        text = "\n".join(f"`{i}.` {word}" for i, word in enumerate(values, 1))
         for start in range(0, len(text), 1800):
             await ctx.send(text[start:start + 1800])
 
-    @swear_words.command(name="add")
-    async def swear_words_add(self, ctx: commands.Context, *, term: str):
-        """Aggiunge una parola o frase da rilevare."""
+    @swear_profanities.command(name="add")
+    async def swear_profanities_add(self, ctx: commands.Context, *, term: str):
         term = term.strip()
         if not term:
             return await ctx.send("Inserisci una parola o frase.")
-        if self._normalize(term) in {self._normalize(x) for x in STANDALONE_IGNORED}:
-            return await ctx.send("Quel termine religioso da solo non viene conteggiato. Aggiungi una frase completa, ad esempio `porco dio`.")
-        async with self.config.guild(ctx.guild).words() as words:
-            normalized = {self._normalize(w) for w in words}
-            if self._normalize(term) in normalized:
-                return await ctx.send("Questa parola/frase è già presente.")
-            words.append(term)
+        async with self.config.guild(ctx.guild).profanities() as values:
+            if self._normalize(term) in {self._normalize(x) for x in values}:
+                return await ctx.send("Gia' presente.")
+            values.append(term)
         await ctx.send(f"Aggiunta: `{term}`")
 
-    @swear_words.command(name="remove", aliases=["del", "delete"])
-    async def swear_words_remove(self, ctx: commands.Context, *, term: str):
-        """Rimuove una parola o frase dalla lista."""
+    @swear_profanities.command(name="remove", aliases=["del", "delete"])
+    async def swear_profanities_remove(self, ctx: commands.Context, *, term: str):
         target = self._normalize(term)
-        async with self.config.guild(ctx.guild).words() as words:
-            index = next((i for i, w in enumerate(words) if self._normalize(w) == target), None)
+        async with self.config.guild(ctx.guild).profanities() as values:
+            index = next((i for i, x in enumerate(values) if self._normalize(x) == target), None)
             if index is None:
                 return await ctx.send("Parola/frase non trovata.")
-            removed = words.pop(index)
+            removed = values.pop(index)
         await ctx.send(f"Rimossa: `{removed}`")
 
-    @swear_words.command(name="reset")
-    async def swear_words_reset(self, ctx: commands.Context):
-        """Ripristina la lista predefinita di bestemmie/parolacce."""
-        await self.config.guild(ctx.guild).words.set(DEFAULT_WORDS)
-        await ctx.send("Lista predefinita ripristinata.")
+    @swear_profanities.command(name="reset")
+    async def swear_profanities_reset(self, ctx: commands.Context):
+        await self.config.guild(ctx.guild).profanities.set(DEFAULT_PROFANITIES)
+        await ctx.send("Lista parolacce/insulti ripristinata.")
 
     @swearjar.group(name="channels", aliases=["canali"], invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_channels(self, ctx: commands.Context):
-        """Configura in quali canali SwearJar ascolta."""
         await ctx.send_help(ctx.command)
 
     @swear_channels.command(name="mode")
     async def swear_channels_mode(self, ctx: commands.Context, mode: str):
-        """Imposta `all`, `include` (solo lista) o `exclude` (tutti tranne lista)."""
         mode = mode.lower().strip()
         if mode not in {"all", "include", "exclude"}:
-            return await ctx.send("Modalità valida: `all`, `include`, `exclude`.")
+            return await ctx.send("Modalita' valida: `all`, `include`, `exclude`.")
         await self.config.guild(ctx.guild).channel_mode.set(mode)
-        await ctx.send(f"Modalità canali impostata su **{mode}**.")
+        await ctx.send(f"Modalita' canali impostata su **{mode}**.")
 
     @swear_channels.command(name="add")
     async def swear_channels_add(self, ctx: commands.Context, channel_id: int):
-        """Aggiunge un canale alla lista include/exclude usando l'ID."""
         channel = ctx.guild.get_channel(channel_id)
         if channel is None:
             return await ctx.send("Canale non trovato.")
@@ -294,28 +315,25 @@ class SwearJar(commands.Cog):
 
     @swear_channels.command(name="remove")
     async def swear_channels_remove(self, ctx: commands.Context, channel_id: int):
-        """Rimuove un canale dalla lista include/exclude."""
         async with self.config.guild(ctx.guild).channels() as channels:
             if channel_id not in channels:
-                return await ctx.send("Quel canale non è nella lista.")
+                return await ctx.send("Quel canale non e' nella lista.")
             channels.remove(channel_id)
         await ctx.send("Canale rimosso dalla lista.")
 
     @swear_channels.command(name="list")
     async def swear_channels_list(self, ctx: commands.Context):
-        """Mostra modalità e canali configurati."""
         mode = await self.config.guild(ctx.guild).channel_mode()
         ids = await self.config.guild(ctx.guild).channels()
         lines: List[str] = []
         for cid in ids:
             channel = ctx.guild.get_channel(cid)
             lines.append(f"{getattr(channel, 'mention', None) or '`'+str(cid)+'`'}")
-        await ctx.send(f"Modalità: **{mode}**\n" + ("\n".join(lines) if lines else "Nessun canale in lista."))
+        await ctx.send(f"Modalita': **{mode}**\n" + ("\n".join(lines) if lines else "Nessun canale in lista."))
 
     @commands.command(name="leadswear")
     @commands.guild_only()
     async def leadswear(self, ctx: commands.Context):
-        """Mostra la leaderboard pubblica Top 10 di bestemmie/parolacce."""
         all_members = await self.config.all_members(ctx.guild)
         ranking = sorted(
             ((int(uid), data.get("count", 0)) for uid, data in all_members.items() if data.get("count", 0) > 0),
@@ -323,7 +341,7 @@ class SwearJar(commands.Cog):
             reverse=True,
         )[:10]
         if not ranking:
-            return await ctx.send("La leaderboard è ancora vuota.")
+            return await ctx.send("La leaderboard e' ancora vuota.")
 
         medals = ["🥇", "🥈", "🥉"]
         lines = []
@@ -338,5 +356,5 @@ class SwearJar(commands.Cog):
             description="\n".join(lines),
             colour=discord.Colour.gold(),
         )
-        embed.set_footer(text="Top 10 bestemmie/parolacce")
+        embed.set_footer(text="Top 10 bestemmie rilevate")
         await ctx.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())

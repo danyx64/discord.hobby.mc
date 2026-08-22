@@ -1,0 +1,12 @@
+{
+  "author": ["danyx64"],
+  "description": "Comandi slash compatibili con installazione utente e diagnostica owner-only per Red Discord Bot.",
+  "install_msg": "Carica il cog con `[p]load userinstallctl`. I comandi slash richiedono sincronizzazione globale e supporto User Install nell'app Discord.",
+  "short": "User install controls",
+  "requirements": [],
+  "tags": ["user-install", "slash", "owner", "discord"],
+  "min_bot_version": "3.5.0",
+  "hidden": false,
+  "disabled": false,
+  "type": "COG"
+}

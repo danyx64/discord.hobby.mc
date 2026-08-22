@@ -1,0 +1,12 @@
+{
+  "author": ["danyx64"],
+  "description": "Controllo remoto owner-only dei server in cui si trova il bot, nel rispetto dei permessi Discord.",
+  "install_msg": "Carica il cog con `[p]load ownercontrol`. Tutti i comandi sono riservati al proprietario del bot.",
+  "short": "Owner-only remote guild control",
+  "requirements": [],
+  "tags": ["admin", "owner", "guilds", "control"],
+  "min_bot_version": "3.5.0",
+  "hidden": true,
+  "disabled": false,
+  "type": "COG"
+}

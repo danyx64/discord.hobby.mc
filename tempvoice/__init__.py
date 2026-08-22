@@ -1,14 +1,13 @@
 from .tempvoice import TempVoice, TempVoicePanel
 
 
-# Etichette leggibili per la pulsantiera TempVoice. La patch viene applicata
-# all'__init__ della View cosi' vale sia per il pannello persistente caricato
-# all'avvio sia per ogni nuovo pannello creato con /voice panel.
-_ORIGINAL_PANEL_INIT = TempVoicePanel.__init__
+# Etichette leggibili per la pulsantiera TempVoice.
+# La patch e' idempotente: su reload non si avvolge mai su se stessa.
+_BASE_PANEL_INIT = getattr(TempVoicePanel.__init__, "__wrapped__", TempVoicePanel.__init__)
 
 
 def _labeled_panel_init(self, cog):
-    _ORIGINAL_PANEL_INIT(self, cog)
+    _BASE_PANEL_INIT(self, cog)
     labels = {
         "tempvoice:rename": "Rinomina",
         "tempvoice:limit": "Limite",
@@ -27,6 +26,7 @@ def _labeled_panel_init(self, cog):
             item.label = labels[custom_id]
 
 
+_labeled_panel_init.__wrapped__ = _BASE_PANEL_INIT
 TempVoicePanel.__init__ = _labeled_panel_init
 
 

@@ -110,8 +110,6 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
     def __init__(self, cog):
         super().__init__(cog)
 
-        # Rimuove il vecchio pulsante privacy a toggle: ora apre un menu a tendina
-        # con Aperta / Privata / Nascosta.
         for item in list(self.children):
             if getattr(item, "custom_id", None) == "tempvoice:privacy":
                 self.remove_item(item)
@@ -216,7 +214,6 @@ async def robust_create_room(self, member: discord.Member):
     observer_id = await cfg.observer_role()
     observer = guild.get_role(observer_id) if observer_id else None
     overwrites = {
-        # Anche sotto una categoria pubblica, la stanza nasce completamente invisibile.
         guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
         member: discord.PermissionOverwrite(
             view_channel=True, connect=True, speak=True, manage_channels=True, move_members=True
@@ -286,9 +283,6 @@ async def _admin_only(interaction: discord.Interaction) -> bool:
     return False
 
 
-# Comandi amministrativi: setup/panel/enable/disable/template/status.
-# I sottocomandi di uno stesso slash group non possono essere nascosti in modo affidabile
-# singolarmente da Discord, quindi vengono sempre protetti anche lato bot.
 for admin_name in ("setup", "panel", "enable", "disable", "template", "status"):
     cmd = TempVoice.voice.get_command(admin_name)
     if cmd is not None:
@@ -303,45 +297,15 @@ if panel_command is not None:
             title="TempVoice Interface",
             description=(
                 "Questa interfaccia puo' essere usata per gestire i canali vocali temporanei. "
-                "Altre opzioni sono disponibili tramite i comandi **/voice**."
+                "Altre opzioni sono disponibili tramite i comandi **/voice**.\n\n"
+                "✏️ **Rinomina**  •  👥 **Limite**  •  🛡️ **Privacy**  •  🟢 **Fidati**\n"
+                "🔇 **Sfiducia**  •  📨 **Invita**  •  📵 **Espelli**  •  🚫 **Blocca**\n"
+                "🔓 **Sblocca**  •  👑 **Rivendica**  •  🔀 **Trasferisci**\n"
+                "🎚️ **Qualita'**  •  🗑️ **Elimina**  •  ℹ️ **Info**"
             ),
             colour=discord.Colour.blurple(),
         )
-
-        # Tre colonne inline rendono la legenda molto piu' orizzontale e vicina
-        # all'aspetto del pannello TempVoice originale.
-        embed.add_field(
-            name="Gestione",
-            value=(
-                "✏️ **Rinomina** — cambia nome\n"
-                "👥 **Limita** — limite utenti\n"
-                "🛡️ **Privacy** — aperta/privata/nascosta\n"
-                "🟢 **Fidati** — autorizza utente\n"
-                "🔇 **Sfiducia** — rimuove fidato"
-            ),
-            inline=True,
-        )
-        embed.add_field(
-            name="Accesso",
-            value=(
-                "📨 **Invita** — invito in DM\n"
-                "📵 **Espelli** — rimuove utente\n"
-                "🚫 **Blocca** — nega accesso\n"
-                "🔓 **Sblocca** — rimuove blocco\n"
-                "👑 **Rivendica** — prende proprieta'"
-            ),
-            inline=True,
-        )
-        embed.add_field(
-            name="Stanza",
-            value=(
-                "🔀 **Trasferisci** — cambia proprietario\n"
-                "🎚️ **Bitrate** — qualita' audio\n"
-                "🗑️ **Elimina** — elimina stanza\n"
-                "ℹ️ **Info** — mostra configurazione"
-            ),
-            inline=True,
-        )
+        embed.set_footer(text="Usa i pulsanti qui sotto per gestire la tua vocale.")
 
         msg = await channel.send(embed=embed, view=TempVoicePanel(self))
         cfg = self.config.guild(interaction.guild)

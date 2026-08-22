@@ -33,7 +33,6 @@ class BitrateModal(discord.ui.Modal, title="Bitrate vocale"):
 
 class ActionButton(discord.ui.Button):
     def __init__(self, emoji, custom_id, row, handler, style=discord.ButtonStyle.secondary):
-        # Solo emoji: la spiegazione e' nell'embed, come richiesto.
         super().__init__(emoji=emoji, style=style, custom_id=custom_id, row=row)
         self.handler = handler
 
@@ -46,13 +45,10 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
 
     def __init__(self, cog):
         super().__init__(cog)
-
-        # Rimuove qualsiasi label eventualmente ereditata da vecchie versioni.
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.label = None
 
-        # Funzioni presenti nei comandi /voice ma mancanti dalla pulsantiera base.
         self.add_item(ActionButton("👤", "tempvoice:untrust", 2, self._untrust))
         self.add_item(ActionButton("🔓", "tempvoice:unblock", 2, self._unblock))
         self.add_item(ActionButton("🎚️", "tempvoice:bitrate", 2, self._bitrate))
@@ -86,15 +82,16 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
                     await room.set_permissions(target, overwrite=None)
                 except discord.HTTPException:
                     pass
-        await room.set_permissions(interaction.guild.default_role, view_channel=True, connect=False)
+        # Reset = stanza nuovamente completamente nascosta a @everyone.
+        await room.set_permissions(interaction.guild.default_role, view_channel=False, connect=False)
         await room.set_permissions(owner, view_channel=True, connect=True, speak=True, manage_channels=True, move_members=True)
         observer = interaction.guild.get_role(await self.cog.config.guild(interaction.guild).observer_role())
         if observer:
             await room.set_permissions(observer, view_channel=True, connect=True)
         info = await self.cog.room_info(room)
-        info.update({"privacy": "private", "trusted": [], "blocked": []})
+        info.update({"privacy": "hidden", "trusted": [], "blocked": []})
         await self.cog.save_room_info(room, info)
-        await interaction.response.send_message("Configurazione della vocale ripristinata.", ephemeral=True)
+        await interaction.response.send_message("Configurazione ripristinata: la vocale è di nuovo nascosta.", ephemeral=True)
 
     async def _info(self, interaction):
         room = await self.cog.get_user_room(interaction.guild, interaction.user)
@@ -106,7 +103,7 @@ class TempVoicePanel(tempvoice_module.TempVoicePanel):
         await interaction.response.send_message(
             f"**Vocale:** {room.mention}\n"
             f"**Proprietario:** {owner.mention if owner else info.get('owner_id')}\n"
-            f"**Privacy:** `{info.get('privacy', 'private')}`\n"
+            f"**Privacy:** `{info.get('privacy', 'hidden')}`\n"
             f"**Limite:** `{room.user_limit or 'nessuno'}`\n"
             f"**Bitrate:** `{room.bitrate // 1000} kbps`\n"
             f"**Fidati:** `{len(info.get('trusted', []))}` | **Bloccati:** `{len(info.get('blocked', []))}`\n"
@@ -158,7 +155,8 @@ async def robust_create_room(self, member: discord.Member):
     observer_id = await cfg.observer_role()
     observer = guild.get_role(observer_id) if observer_id else None
     overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=False),
+        # Anche sotto una categoria pubblica, la stanza nasce completamente invisibile.
+        guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
         member: discord.PermissionOverwrite(
             view_channel=True, connect=True, speak=True, manage_channels=True, move_members=True
         ),
@@ -191,7 +189,7 @@ async def robust_create_room(self, member: discord.Member):
         {
             "owner_id": member.id,
             "created_at": int(datetime.now(timezone.utc).timestamp()),
-            "privacy": "private",
+            "privacy": "hidden",
             "trusted": [],
             "blocked": [],
         },
@@ -211,13 +209,31 @@ async def robust_create_room(self, member: discord.Member):
     return None
 
 
-# Usa sempre la versione diagnostica per il join-to-create.
 TempVoice.create_room = robust_create_room
-# Fa usare al comando /voice panel questa View emoji-only.
 tempvoice_module.TempVoicePanel = TempVoicePanel
 
 
-# Migliora /voice panel: risposta immediata (evita Unknown interaction) + legenda completa.
+async def _admin_only(interaction: discord.Interaction) -> bool:
+    member = interaction.user
+    perms = getattr(member, "guild_permissions", None)
+    if perms and (perms.administrator or perms.manage_guild):
+        return True
+    if interaction.response.is_done():
+        await interaction.followup.send("Non hai i permessi per usare questo comando.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Non hai i permessi per usare questo comando.", ephemeral=True)
+    return False
+
+
+# Comandi amministrativi: setup/panel/enable/disable/template/status.
+# I sottocomandi di uno stesso slash group non possono essere nascosti in modo affidabile
+# singolarmente da Discord, quindi vengono sempre protetti anche lato bot.
+for admin_name in ("setup", "panel", "enable", "disable", "template", "status"):
+    cmd = TempVoice.voice.get_command(admin_name)
+    if cmd is not None:
+        cmd.add_check(_admin_only)
+
+
 panel_command = TempVoice.voice.get_command("panel")
 if panel_command is not None:
     async def panel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
@@ -239,7 +255,7 @@ if panel_command is not None:
                 "👤 **Sfiducia** — rimuove un utente dai fidati\n"
                 "🔓 **Sblocca** — rimuove un utente dai bloccati\n"
                 "🎚️ **Bitrate** — modifica la qualita' audio\n"
-                "♻️ **Reset** — ripristina permessi e impostazioni\n"
+                "♻️ **Reset** — ripristina la stanza come nascosta\n"
                 "ℹ️ **Info** — mostra proprietario e configurazione"
             ),
             colour=discord.Colour.blurple(),
@@ -253,7 +269,6 @@ if panel_command is not None:
     panel_command._callback = panel_callback
 
 
-# Estende /voice status con una diagnosi pratica del join-to-create.
 status_command = TempVoice.voice.get_command("status")
 if status_command is not None:
     async def status_callback(self, interaction: discord.Interaction):
@@ -292,7 +307,8 @@ if status_command is not None:
                 f"**Categoria:** **{getattr(category, 'name', 'non configurata')}**\n"
                 f"**Template:** `{await cfg.name_template()}`\n"
                 f"**Ruolo osservatore:** {observer.mention if observer else 'nessuno'}\n"
-                f"**Vocali attive:** **{len(rooms)}**"
+                f"**Vocali attive:** **{len(rooms)}**\n"
+                f"**Default privacy:** `hidden`"
             ),
             inline=False,
         )

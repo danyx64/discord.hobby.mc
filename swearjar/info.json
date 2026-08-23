@@ -1,10 +1,10 @@
 {
   "author": ["danyx64"],
-  "description": "Swear Jar italiano per Red-DiscordBot: rileva parole/frasi configurabili, risponde ai messaggi, conta le infrazioni per utente e mostra una leaderboard top 10.",
+  "description": "Swear Jar italiano per Red-DiscordBot: rileva parole/frasi configurabili, risponde ai messaggi, conta le infrazioni per utente, mostra una leaderboard top 10 e permette agli amministratori di azzerare le statistiche anche degli utenti usciti dal server.",
   "short": "Swear Jar italiano configurabile",
-  "install_msg": "SwearJar installato. Caricalo e usa `[p]swearjar status` e `[p]swearjar usage` per configurarlo.",
+  "install_msg": "SwearJar aggiornato. Usa `[p]swear reset @utente` per un membro presente oppure `[p]swear reset ID_UTENTE` per azzerare le statistiche di un utente che ha lasciato il server.",
   "requirements": [],
   "tags": ["swearjar", "moderazione", "italiano", "leaderboard", "chat"],
   "type": "COG",
-  "end_user_data_statement": "Questo cog salva localmente, per server, il conteggio delle occorrenze associate agli ID Discord degli utenti e la configurazione delle parole e dei canali. Gli amministratori possono azzerare i conteggi con i comandi previsti."
+  "end_user_data_statement": "Questo cog salva localmente, per server, il conteggio delle occorrenze associate agli ID Discord degli utenti e la configurazione delle parole e dei canali. Gli amministratori possono azzerare i conteggi con `[p]swear reset` anche indicando direttamente un ID Discord."
 }

@@ -1,3 +1,4 @@
+import asyncio
 import re
 import unicodedata
 from pathlib import Path
@@ -39,10 +40,10 @@ DEFAULT_REPLY = "{mention} ha bestemmiato per la {count}ª volta."
 
 
 class SwearJar(commands.Cog):
-    """Conta solo messaggi che contengono sia una divinita' sia una parolaccia."""
+    """Swear Jar italiano: rilevamento, conteggi, configurazione e classifica."""
 
     __author__ = "danyx64"
-    __version__ = "2.1.0"
+    __version__ = "2.3.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -60,6 +61,7 @@ class SwearJar(commands.Cog):
             channels=[],
         )
         self.config.register_member(count=0)
+        self._reply_locks = {}
 
     @staticmethod
     def _clean_file_values(lines: List[str]) -> List[str]:
@@ -178,8 +180,8 @@ class SwearJar(commands.Cog):
         matched = self._find_violation(message.content, deities, profanities)
         if matched is None:
             return
-        deity, profanity = matched
 
+        deity, profanity = matched
         member_group = self.config.member(message.author)
         new_count = (await member_group.count()) + 1
         await member_group.count.set(new_count)
@@ -199,31 +201,62 @@ class SwearJar(commands.Cog):
             guild=message.guild.name,
             server=message.guild.name,
         )
+
+        # Serializza le risposte nello stesso canale: evita raffiche concorrenti
+        # che possono amplificare i 429 di Discord durante picchi di messaggi.
+        lock = self._reply_locks.setdefault(message.channel.id, asyncio.Lock())
         try:
-            await message.reply(reply[:2000], mention_author=False, allowed_mentions=discord.AllowedMentions(users=True))
+            async with lock:
+                await message.reply(
+                    reply[:2000],
+                    mention_author=False,
+                    allowed_mentions=discord.AllowedMentions(users=True),
+                )
+                await asyncio.sleep(0.25)
         except (discord.Forbidden, discord.HTTPException):
             pass
 
     @commands.group(name="swearjar", aliases=["swear"], invoke_without_command=True)
     @commands.guild_only()
     async def swearjar(self, ctx: commands.Context):
-        """Configura il contatore bestemmie: divinita' + parolaccia."""
+        """Mostra l'aiuto e configura SwearJar."""
         await ctx.send_help(ctx.command)
+
+    @swearjar.command(name="commands", aliases=["comandi"])
+    async def swear_commands(self, ctx: commands.Context):
+        """Mostra la lista rapida dei comandi SwearJar con descrizione."""
+        text = (
+            "**Comandi SwearJar**\n"
+            "`swear status` - Mostra stato e configurazione.\n"
+            "`swear enable` - Abilita il rilevamento.\n"
+            "`swear disable` - Disabilita il rilevamento.\n"
+            "`swear reset <utente|ID>` - Azzera le statistiche di un utente, anche se uscito.\n"
+            "`swear reloadfiles` - Ricarica i dizionari dai file.\n"
+            "`swear message ...` - Gestisce il messaggio di risposta.\n"
+            "`swear deities ...` - Gestisce le divinita'.\n"
+            "`swear profanities ...` - Gestisce parolacce e insulti.\n"
+            "`swear channels ...` - Configura i canali controllati.\n"
+            "`leadswear` - Mostra la top 10 Swear Jar."
+        )
+        await ctx.send(text)
 
     @swearjar.command(name="enable")
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_enable(self, ctx: commands.Context):
+        """Abilita il rilevamento SwearJar nel server."""
         await self.config.guild(ctx.guild).enabled.set(True)
         await ctx.send("SwearJar abilitato.")
 
     @swearjar.command(name="disable")
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_disable(self, ctx: commands.Context):
+        """Disabilita il rilevamento SwearJar nel server."""
         await self.config.guild(ctx.guild).enabled.set(False)
         await ctx.send("SwearJar disabilitato.")
 
     @swearjar.command(name="status")
     async def swear_status(self, ctx: commands.Context):
+        """Mostra stato, regole, dizionari e configurazione dei canali."""
         enabled = await self.config.guild(ctx.guild).enabled()
         mode = await self.config.guild(ctx.guild).channel_mode()
         channels = await self.config.guild(ctx.guild).channels()
@@ -237,10 +270,54 @@ class SwearJar(commands.Cog):
             f"Modalita' canali: **{mode}** | Canali configurati: `{len(channels)}`"
         )
 
+    @swearjar.command(name="reset", aliases=["resetstats", "resetbestemmie"])
+    @commands.admin_or_permissions(manage_guild=True)
+    async def swear_reset(self, ctx: commands.Context, *, target: str):
+        """Azzera le statistiche di un utente; accetta mention, nome o ID Discord."""
+        value = target.strip()
+        mention_match = re.fullmatch(r"<@!?(\d{15,25})>", value)
+        member = None
+        user_id = None
+
+        if mention_match:
+            user_id = int(mention_match.group(1))
+            member = ctx.guild.get_member(user_id)
+        elif value.isdigit() and 15 <= len(value) <= 25:
+            user_id = int(value)
+            member = ctx.guild.get_member(user_id)
+        else:
+            converter = commands.MemberConverter()
+            try:
+                member = await converter.convert(ctx, value)
+                user_id = member.id
+            except commands.BadArgument:
+                return await ctx.send(
+                    "Utente non trovato. Se ha lasciato il server usa il suo **ID Discord**.\n"
+                    "Esempio: `[p]swear reset 123456789012345678`"
+                )
+
+        member_group = self.config.member_from_ids(ctx.guild.id, user_id)
+        previous_count = await member_group.count()
+        await member_group.count.set(0)
+
+        if member is not None:
+            label = member.mention
+        else:
+            try:
+                user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                label = f"{user} (`{user_id}`)"
+            except (discord.NotFound, discord.HTTPException):
+                label = f"utente `{user_id}`"
+
+        await ctx.send(
+            f"Statistiche SwearJar di {label} azzerate. "
+            f"Conteggio precedente: **{previous_count}** -> **0**."
+        )
+
     @swearjar.command(name="reloadfiles")
     @commands.admin_or_permissions(manage_guild=True)
     async def reload_files(self, ctx: commands.Context):
-        """Rilegge divinita.txt e parolacce.txt dalla cartella del cog."""
+        """Rilegge divinita.txt e parolacce.txt e aggiorna la configurazione."""
         try:
             self._ensure_dictionary_files()
         except OSError as exc:
@@ -251,25 +328,30 @@ class SwearJar(commands.Cog):
     @swearjar.group(name="message", invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_message(self, ctx: commands.Context):
+        """Gestisce il testo di risposta del contatore."""
         await ctx.send_help(ctx.command)
 
     @swear_message.command(name="view")
     async def swear_message_view(self, ctx: commands.Context):
+        """Mostra il messaggio di risposta attualmente configurato."""
         value = await self.config.guild(ctx.guild).reply_message()
         await ctx.send(f"Messaggio attuale:\n```\n{value}\n```")
 
     @swear_message.command(name="set")
     async def swear_message_set(self, ctx: commands.Context, *, text: str):
+        """Imposta un nuovo messaggio di risposta."""
         await self.config.guild(ctx.guild).reply_message.set(text[:2000])
         await ctx.send("Messaggio aggiornato.")
 
     @swear_message.command(name="reset")
     async def swear_message_reset(self, ctx: commands.Context):
+        """Ripristina il messaggio di risposta predefinito."""
         await self.config.guild(ctx.guild).reply_message.set(DEFAULT_REPLY)
         await ctx.send("Messaggio ripristinato.")
 
     @swear_message.command(name="usage")
     async def swear_message_usage(self, ctx: commands.Context):
+        """Mostra i placeholder disponibili nel messaggio di risposta."""
         await ctx.send(
             "Placeholder: `{mention}`, `{user}`, `{username}`, `{displayname}`, `{user_id}`, "
             "`{count}`, `{word}`, `{deity}`, `{profanity}`, `{channel}`, `{guild}`, `{server}`."
@@ -278,15 +360,18 @@ class SwearJar(commands.Cog):
     @swearjar.group(name="deities", aliases=["divinita"], invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_deities(self, ctx: commands.Context):
+        """Gestisce il dizionario delle divinita' e riferimenti religiosi."""
         await ctx.send_help(ctx.command)
 
     @swear_deities.command(name="list")
     async def swear_deities_list(self, ctx: commands.Context):
+        """Mostra tutte le divinita' configurate."""
         values = self._read_dictionary_file(self.deities_file, DEFAULT_DEITIES)
         await ctx.send("Divinita': " + ", ".join(f"`{x}`" for x in values))
 
     @swear_deities.command(name="add")
     async def swear_deities_add(self, ctx: commands.Context, *, term: str):
+        """Aggiunge una divinita' o riferimento religioso al dizionario."""
         term = term.strip()
         if not term:
             return await ctx.send("Inserisci un termine.")
@@ -307,6 +392,7 @@ class SwearJar(commands.Cog):
 
     @swear_deities.command(name="remove")
     async def swear_deities_remove(self, ctx: commands.Context, *, term: str):
+        """Rimuove una divinita' dal dizionario."""
         target = self._normalize(term)
         values = self._read_dictionary_file(self.deities_file, DEFAULT_DEITIES)
         new_values = [x for x in values if self._normalize(x) != target]
@@ -325,6 +411,7 @@ class SwearJar(commands.Cog):
 
     @swear_deities.command(name="reset")
     async def swear_deities_reset(self, ctx: commands.Context):
+        """Ripristina il dizionario delle divinita' ai valori predefiniti."""
         try:
             self._write_dictionary_file(
                 self.deities_file,
@@ -339,10 +426,12 @@ class SwearJar(commands.Cog):
     @swearjar.group(name="profanities", aliases=["words", "parole", "parolacce"], invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_profanities(self, ctx: commands.Context):
+        """Gestisce il dizionario delle parolacce e degli insulti."""
         await ctx.send_help(ctx.command)
 
     @swear_profanities.command(name="list")
     async def swear_profanities_list(self, ctx: commands.Context):
+        """Mostra tutte le parolacce e gli insulti configurati."""
         values = self._read_dictionary_file(self.profanities_file, DEFAULT_PROFANITIES)
         text = "\n".join(f"`{i}.` {word}" for i, word in enumerate(values, 1))
         for start in range(0, len(text), 1800):
@@ -350,6 +439,7 @@ class SwearJar(commands.Cog):
 
     @swear_profanities.command(name="add")
     async def swear_profanities_add(self, ctx: commands.Context, *, term: str):
+        """Aggiunge una parolaccia o frase al dizionario."""
         term = term.strip()
         if not term:
             return await ctx.send("Inserisci una parola o frase.")
@@ -370,6 +460,7 @@ class SwearJar(commands.Cog):
 
     @swear_profanities.command(name="remove", aliases=["del", "delete"])
     async def swear_profanities_remove(self, ctx: commands.Context, *, term: str):
+        """Rimuove una parolaccia o frase dal dizionario."""
         target = self._normalize(term)
         values = self._read_dictionary_file(self.profanities_file, DEFAULT_PROFANITIES)
         new_values = [x for x in values if self._normalize(x) != target]
@@ -388,6 +479,7 @@ class SwearJar(commands.Cog):
 
     @swear_profanities.command(name="reset")
     async def swear_profanities_reset(self, ctx: commands.Context):
+        """Ripristina il dizionario delle parolacce ai valori predefiniti."""
         try:
             self._write_dictionary_file(
                 self.profanities_file,
@@ -402,10 +494,12 @@ class SwearJar(commands.Cog):
     @swearjar.group(name="channels", aliases=["canali"], invoke_without_command=True)
     @commands.admin_or_permissions(manage_guild=True)
     async def swear_channels(self, ctx: commands.Context):
+        """Configura in quali canali SwearJar deve controllare i messaggi."""
         await ctx.send_help(ctx.command)
 
     @swear_channels.command(name="mode")
     async def swear_channels_mode(self, ctx: commands.Context, mode: str):
+        """Imposta la modalita' canali: all, include oppure exclude."""
         mode = mode.lower().strip()
         if mode not in {"all", "include", "exclude"}:
             return await ctx.send("Modalita' valida: `all`, `include`, `exclude`.")
@@ -414,6 +508,7 @@ class SwearJar(commands.Cog):
 
     @swear_channels.command(name="add")
     async def swear_channels_add(self, ctx: commands.Context, channel_id: int):
+        """Aggiunge un canale alla lista include/exclude tramite ID."""
         channel = ctx.guild.get_channel(channel_id)
         if channel is None:
             return await ctx.send("Canale non trovato.")
@@ -424,6 +519,7 @@ class SwearJar(commands.Cog):
 
     @swear_channels.command(name="remove")
     async def swear_channels_remove(self, ctx: commands.Context, channel_id: int):
+        """Rimuove un canale dalla lista include/exclude tramite ID."""
         async with self.config.guild(ctx.guild).channels() as channels:
             if channel_id not in channels:
                 return await ctx.send("Quel canale non e' nella lista.")
@@ -432,17 +528,22 @@ class SwearJar(commands.Cog):
 
     @swear_channels.command(name="list")
     async def swear_channels_list(self, ctx: commands.Context):
+        """Mostra modalita' e lista dei canali configurati."""
         mode = await self.config.guild(ctx.guild).channel_mode()
         ids = await self.config.guild(ctx.guild).channels()
         lines: List[str] = []
         for cid in ids:
             channel = ctx.guild.get_channel(cid)
             lines.append(f"{getattr(channel, 'mention', None) or '`'+str(cid)+'`'}")
-        await ctx.send(f"Modalita': **{mode}**\n" + ("\n".join(lines) if lines else "Nessun canale in lista."))
+        await ctx.send(
+            f"Modalita': **{mode}**\n" +
+            ("\n".join(lines) if lines else "Nessun canale in lista.")
+        )
 
     @commands.command(name="leadswear")
     @commands.guild_only()
     async def leadswear(self, ctx: commands.Context):
+        """Mostra la classifica top 10 dei conteggi SwearJar del server."""
         all_members = await self.config.all_members(ctx.guild)
         ranking = sorted(
             ((int(uid), data.get("count", 0)) for uid, data in all_members.items() if data.get("count", 0) > 0),

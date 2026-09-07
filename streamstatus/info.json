@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Imposta una presenza Streaming viola personalizzabile per Red-DiscordBot.",
+  "short": "Streaming presence viola per il bot",
+  "install_msg": "StreamStatus installato. Usa `[p]stream set URL TESTO`, `[p]stream enable` e `[p]stream status`.",
+  "requirements": [],
+  "tags": ["stream", "streaming", "presence", "status", "twitch"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog non archivia dati personali degli utenti."
+}

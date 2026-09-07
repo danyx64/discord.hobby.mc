@@ -16,7 +16,7 @@ class Welcome(commands.Cog):
     """Invia un welcome personalizzato con immagine generata automaticamente."""
 
     __author__ = "danyx64"
-    __version__ = "2.5.0"
+    __version__ = "2.6.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -37,7 +37,7 @@ class Welcome(commands.Cog):
         now = discord.utils.utcnow().astimezone(ITALY_TZ)
         created = member.created_at.astimezone(ITALY_TZ)
         joined = member.joined_at.astimezone(ITALY_TZ) if member.joined_at else None
-        avatar = member.display_avatar.url if member.display_avatar else ""
+        global_avatar = member.avatar or member.default_avatar
         global_name = member.global_name or member.name
         return {
             "user": member.mention,
@@ -49,7 +49,7 @@ class Welcome(commands.Cog):
             "displayname": member.display_name,
             "user_tag": str(member),
             "user_id": str(member.id),
-            "user_avatar": avatar,
+            "user_avatar": str(global_avatar.url),
             "guild": guild.name,
             "server": guild.name,
             "guild_id": str(guild.id),
@@ -91,7 +91,7 @@ class Welcome(commands.Cog):
 
     async def _download_image(self, url, *, label, max_bytes=12 * 1024 * 1024):
         timeout = aiohttp.ClientTimeout(total=20)
-        headers = {"User-Agent": "Red Welcome/2.5"}
+        headers = {"User-Agent": "Red Welcome/2.6"}
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(url, allow_redirects=True) as response:
                 if response.status != 200:
@@ -124,8 +124,6 @@ class Welcome(commands.Cog):
         if image.width < 320 or image.height < 180:
             raise ValueError("Sfondo: risoluzione minima 320x180")
 
-        # Output piu compatto su Discord. Gli sfondi piccoli restano piccoli,
-        # quelli grandi vengono ridotti mantenendo esattamente le proporzioni.
         max_side = 960
         if max(image.size) > max_side:
             ratio = max_side / max(image.size)
@@ -137,16 +135,17 @@ class Welcome(commands.Cog):
 
     async def _get_avatar(self, member):
         try:
-            raw = await member.display_avatar.replace(size=512, static_format="png").read()
+            # Usa la PFP globale Discord, non l'eventuale avatar specifico del server.
+            asset = member.avatar or member.default_avatar
+            raw = await asset.replace(size=1024, static_format="png").read()
             image = Image.open(BytesIO(raw))
             image.load()
             return image.convert("RGBA")
         except Exception as exc:
-            raise ValueError(f"Avatar: impossibile leggere la PFP ({exc})") from exc
+            raise ValueError(f"Avatar: impossibile leggere la PFP globale ({exc})") from exc
 
     @classmethod
     def _responsive_font(cls, draw, lines, short_side, max_width):
-        # Font volutamente piu grande rispetto alla 2.4.
         wanted = max(12, round(short_side * 0.078))
         minimum = max(10, round(short_side * 0.038))
         for size in range(wanted, minimum - 1, -1):
@@ -162,10 +161,12 @@ class Welcome(commands.Cog):
         width, height = canvas.size
         short = min(width, height)
 
-        # Solo leggero oscuramento uniforme, nessun box o bordo.
-        canvas = Image.alpha_composite(canvas, Image.new("RGBA", canvas.size, (0, 0, 0, 72)))
+        # Sfondo volutamente piu scuro per aumentare leggibilita' senza box o card.
+        canvas = Image.alpha_composite(
+            canvas,
+            Image.new("RGBA", canvas.size, (0, 0, 0, 118)),
+        )
 
-        # PFP chiaramente piu grande in rapporto allo sfondo e totalmente responsive.
         avatar_size = round(short * 0.30)
         avatar_size = max(36, min(avatar_size, round(height * 0.34)))
 
@@ -183,14 +184,10 @@ class Welcome(commands.Cog):
         global_name = member.global_name or member.name
         lines = ["Benvenuto", global_name, f"in {member.guild.name}"]
         draw = ImageDraw.Draw(canvas)
-
         font, font_size = self._responsive_font(draw, lines, short, round(width * 0.82))
 
-        # Le tre righe vengono posizionate per CENTRO, non per bounding box.
-        # Quindi la distanza centro-centro e' matematicamente identica.
         line_step = max(round(font_size * 1.42), round(short * 0.095))
         avatar_gap = max(round(font_size * 0.85), round(short * 0.045))
-
         text_block_height = (line_step * 2) + font_size
         total_height = avatar_size + avatar_gap + text_block_height
         top = max(round(height * 0.035), (height - total_height) // 2)
@@ -204,13 +201,12 @@ class Welcome(commands.Cog):
 
         for index, line in enumerate(lines):
             center_y = first_center_y + (index * line_step)
-
             draw.text(
                 (center_x + shadow, center_y + shadow),
                 line,
                 font=font,
                 anchor="mm",
-                fill=(0, 0, 0, 105),
+                fill=(0, 0, 0, 120),
             )
             draw.text(
                 (center_x, center_y),
@@ -221,7 +217,13 @@ class Welcome(commands.Cog):
             )
 
         output = BytesIO()
-        canvas.convert("RGB").save(output, format="JPEG", quality=90, optimize=True)
+        canvas.convert("RGB").save(
+            output,
+            format="JPEG",
+            quality=95,
+            subsampling=0,
+            optimize=True,
+        )
         output.seek(0)
         return output
 

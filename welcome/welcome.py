@@ -16,7 +16,7 @@ class Welcome(commands.Cog):
     """Invia un welcome personalizzato con immagine generata automaticamente."""
 
     __author__ = "danyx64"
-    __version__ = "2.4.0"
+    __version__ = "2.5.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -91,7 +91,7 @@ class Welcome(commands.Cog):
 
     async def _download_image(self, url, *, label, max_bytes=12 * 1024 * 1024):
         timeout = aiohttp.ClientTimeout(total=20)
-        headers = {"User-Agent": "Red Welcome/2.4"}
+        headers = {"User-Agent": "Red Welcome/2.5"}
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(url, allow_redirects=True) as response:
                 if response.status != 200:
@@ -108,7 +108,7 @@ class Welcome(commands.Cog):
 
     async def _get_background(self, guild_id, url):
         if not url:
-            return Image.new("RGB", (1280, 720), (32, 36, 43))
+            return Image.new("RGB", (960, 540), (32, 36, 43))
 
         cached = self._background_cache.get(guild_id)
         raw = cached[1] if cached and cached[0] == url else await self._download_image(url, label="Sfondo")
@@ -124,16 +124,15 @@ class Welcome(commands.Cog):
         if image.width < 320 or image.height < 180:
             raise ValueError("Sfondo: risoluzione minima 320x180")
 
-        # Mantiene gli sfondi piccoli alla loro dimensione originale.
-        # Gli sfondi grandi vengono ridotti per avere un welcome piu compatto su Discord.
-        max_side = 1280
+        # Output piu compatto su Discord. Gli sfondi piccoli restano piccoli,
+        # quelli grandi vengono ridotti mantenendo esattamente le proporzioni.
+        max_side = 960
         if max(image.size) > max_side:
             ratio = max_side / max(image.size)
-            new_size = (
-                max(1, round(image.width * ratio)),
-                max(1, round(image.height * ratio)),
+            image = image.resize(
+                (max(1, round(image.width * ratio)), max(1, round(image.height * ratio))),
+                Image.Resampling.LANCZOS,
             )
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
         return image
 
     async def _get_avatar(self, member):
@@ -147,15 +146,15 @@ class Welcome(commands.Cog):
 
     @classmethod
     def _responsive_font(cls, draw, lines, short_side, max_width):
-        # Tutte le righe condividono lo stesso font: il blocco rimane visivamente uniforme.
-        wanted = max(14, round(short_side * 0.052))
-        minimum = max(11, round(short_side * 0.026))
-
+        # Font volutamente piu grande rispetto alla 2.4.
+        wanted = max(12, round(short_side * 0.078))
+        minimum = max(10, round(short_side * 0.038))
         for size in range(wanted, minimum - 1, -1):
             font = cls._font(size)
-            if all(draw.textbbox((0, 0), line, font=font)[2] <= max_width for line in lines):
-                return font
-        return cls._font(minimum)
+            widths = [draw.textbbox((0, 0), line, font=font)[2] for line in lines]
+            if max(widths) <= max_width:
+                return font, size
+        return cls._font(minimum), minimum
 
     async def _build_welcome_image(self, member, image_template, background_url):
         background = await self._get_background(member.guild.id, background_url)
@@ -163,15 +162,12 @@ class Welcome(commands.Cog):
         width, height = canvas.size
         short = min(width, height)
 
-        # Oscuramento proporzionalmente identico su qualunque risoluzione.
-        canvas = Image.alpha_composite(
-            canvas,
-            Image.new("RGBA", canvas.size, (0, 0, 0, 70)),
-        )
+        # Solo leggero oscuramento uniforme, nessun box o bordo.
+        canvas = Image.alpha_composite(canvas, Image.new("RGBA", canvas.size, (0, 0, 0, 72)))
 
-        # Tutte le misure dipendono dal lato corto: nessuna dimensione fissa grossa.
-        avatar_size = max(44, round(short * 0.235))
-        avatar_size = min(avatar_size, round(height * 0.30))
+        # PFP chiaramente piu grande in rapporto allo sfondo e totalmente responsive.
+        avatar_size = round(short * 0.30)
+        avatar_size = max(36, min(avatar_size, round(height * 0.34)))
 
         avatar = await self._get_avatar(member)
         avatar = ImageOps.fit(
@@ -186,48 +182,43 @@ class Welcome(commands.Cog):
 
         global_name = member.global_name or member.name
         lines = ["Benvenuto", global_name, f"in {member.guild.name}"]
-
         draw = ImageDraw.Draw(canvas)
-        max_text_width = round(width * 0.76)
-        font = self._responsive_font(draw, lines, short, max_text_width)
 
-        # Altezza unica per ogni riga + gap unico: righe davvero equidistanti.
-        line_boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
-        line_height = max(box[3] - box[1] for box in line_boxes)
-        line_gap = max(4, round(short * 0.015))
-        avatar_gap = max(9, round(short * 0.030))
+        font, font_size = self._responsive_font(draw, lines, short, round(width * 0.82))
 
-        text_block_height = (line_height * 3) + (line_gap * 2)
-        group_height = avatar_size + avatar_gap + text_block_height
-        group_top = max(round(height * 0.05), (height - group_height) // 2)
+        # Le tre righe vengono posizionate per CENTRO, non per bounding box.
+        # Quindi la distanza centro-centro e' matematicamente identica.
+        line_step = max(round(font_size * 1.42), round(short * 0.095))
+        avatar_gap = max(round(font_size * 0.85), round(short * 0.045))
+
+        text_block_height = (line_step * 2) + font_size
+        total_height = avatar_size + avatar_gap + text_block_height
+        top = max(round(height * 0.035), (height - total_height) // 2)
 
         avatar_x = (width - avatar_size) // 2
-        canvas.alpha_composite(avatar, (avatar_x, group_top))
+        canvas.alpha_composite(avatar, (avatar_x, top))
 
-        y = group_top + avatar_size + avatar_gap
-        shadow_offset = max(1, round(short * 0.0018))
+        first_center_y = top + avatar_size + avatar_gap + (font_size // 2)
+        center_x = width // 2
+        shadow = max(1, round(short * 0.002))
 
-        for line, box in zip(lines, line_boxes):
-            line_width = box[2] - box[0]
-            x = (width - line_width) // 2
-
-            # Corregge l'offset verticale interno del font per centrare ogni riga nella sua cella.
-            glyph_height = box[3] - box[1]
-            text_y = y + ((line_height - glyph_height) // 2) - box[1]
+        for index, line in enumerate(lines):
+            center_y = first_center_y + (index * line_step)
 
             draw.text(
-                (x + shadow_offset, text_y + shadow_offset),
+                (center_x + shadow, center_y + shadow),
                 line,
                 font=font,
+                anchor="mm",
                 fill=(0, 0, 0, 105),
             )
             draw.text(
-                (x, text_y),
+                (center_x, center_y),
                 line,
                 font=font,
+                anchor="mm",
                 fill=(255, 255, 255, 255),
             )
-            y += line_height + line_gap
 
         output = BytesIO()
         canvas.convert("RGB").save(output, format="JPEG", quality=90, optimize=True)
@@ -269,11 +260,7 @@ class Welcome(commands.Cog):
             await channel.send(
                 content,
                 file=discord.File(image, filename="welcome.jpg"),
-                allowed_mentions=discord.AllowedMentions(
-                    users=True,
-                    roles=False,
-                    everyone=False,
-                ),
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
             )
             return True
         except Exception as exc:
@@ -310,9 +297,7 @@ class Welcome(commands.Cog):
     @commands.admin_or_permissions(administrator=True)
     async def welcome_imagemessage(self, ctx, *, text: str):
         await self.config.guild(ctx.guild).image_message.set(text[:300])
-        await ctx.send(
-            "Testo salvato. Il layout grafico usa automaticamente Benvenuto / nome Discord / nome server."
-        )
+        await ctx.send("Testo salvato. Il layout grafico usa automaticamente Benvenuto / nome Discord / nome server.")
 
     @welcome.command(name="background", aliases=["bg"])
     @commands.admin_or_permissions(administrator=True)
@@ -327,9 +312,7 @@ class Welcome(commands.Cog):
             test = Image.open(BytesIO(raw))
             test.load()
         except Exception as exc:
-            return await ctx.send(
-                f"Sfondo non valido: `{type(exc).__name__}: {str(exc)[:500]}`"
-            )
+            return await ctx.send(f"Sfondo non valido: `{type(exc).__name__}: {str(exc)[:500]}`")
 
         await self.config.guild(ctx.guild).background_url.set(url)
         self._background_cache[ctx.guild.id] = (url, raw)
@@ -385,6 +368,4 @@ class Welcome(commands.Cog):
         if ok:
             await ctx.send("✅ Anteprima inviata nel canale welcome.")
         else:
-            await ctx.send(
-                f"❌ Welcome preview fallita: `{self._last_error or 'Errore sconosciuto'}`"
-            )
+            await ctx.send(f"❌ Welcome preview fallita: `{self._last_error or 'Errore sconosciuto'}`")

@@ -1,25 +1,28 @@
+import logging
 from io import BytesIO
 from zoneinfo import ZoneInfo
 
 import aiohttp
 import discord
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
 
 ITALY_TZ = ZoneInfo("Europe/Rome")
+log = logging.getLogger("red.danyx64.welcome")
 
 
 class Welcome(commands.Cog):
     """Invia un welcome personalizzato con immagine generata automaticamente."""
 
     __author__ = "danyx64"
-    __version__ = "2.0.0"
+    __version__ = "2.1.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
         self._background_cache = {}
+        self._last_error = None
         self.config = Config.get_conf(self, identifier=581244918377421006, force_registration=True)
         self.config.register_guild(
             enabled=False,
@@ -102,6 +105,29 @@ class Welcome(commands.Cog):
             lines.append(current)
         return font, lines[:3]
 
+    async def _download_image(self, url: str, *, label: str, max_bytes: int = 12 * 1024 * 1024) -> bytes:
+        timeout = aiohttp.ClientTimeout(total=20)
+        headers = {"User-Agent": "Red-DiscordBot Welcome Cog/2.1"}
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url, allow_redirects=True) as response:
+                if response.status != 200:
+                    raise ValueError(f"{label}: download fallito (HTTP {response.status})")
+
+                content_type = (response.headers.get("Content-Type") or "").lower()
+                if content_type and not content_type.startswith("image/"):
+                    raise ValueError(f"{label}: URL non restituisce un'immagine ({content_type})")
+
+                declared_size = int(response.headers.get("Content-Length", 0) or 0)
+                if declared_size > max_bytes:
+                    raise ValueError(f"{label}: immagine troppo grande")
+
+                raw = await response.read()
+                if not raw:
+                    raise ValueError(f"{label}: file vuoto")
+                if len(raw) > max_bytes:
+                    raise ValueError(f"{label}: immagine troppo grande")
+                return raw
+
     async def _get_background(self, guild_id: int, url: str | None) -> Image.Image:
         if not url:
             return Image.new("RGB", (1280, 720), (32, 36, 43))
@@ -110,21 +136,19 @@ class Welcome(commands.Cog):
         if cached and cached[0] == url:
             raw = cached[1]
         else:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        raise ValueError(f"HTTP {response.status}")
-                    if int(response.headers.get("Content-Length", 0) or 0) > 12 * 1024 * 1024:
-                        raise ValueError("Immagine troppo grande")
-                    raw = await response.read()
-                    if len(raw) > 12 * 1024 * 1024:
-                        raise ValueError("Immagine troppo grande")
+            raw = await self._download_image(url, label="Sfondo")
             self._background_cache[guild_id] = (url, raw)
 
-        image = Image.open(BytesIO(raw)).convert("RGB")
+        try:
+            image = Image.open(BytesIO(raw))
+            image.load()
+            image = ImageOps.exif_transpose(image).convert("RGB")
+        except (UnidentifiedImageError, OSError) as exc:
+            self._background_cache.pop(guild_id, None)
+            raise ValueError(f"Sfondo: formato immagine non valido ({exc})") from exc
+
         if image.width < 320 or image.height < 180:
-            raise ValueError("Risoluzione troppo piccola")
+            raise ValueError(f"Sfondo: risoluzione troppo piccola ({image.width}x{image.height})")
 
         max_side = 1920
         if max(image.size) > max_side:
@@ -135,21 +159,33 @@ class Welcome(commands.Cog):
             )
         return image
 
+    async def _get_avatar(self, member: discord.Member) -> Image.Image:
+        try:
+            avatar_bytes = await member.display_avatar.replace(size=512, static_format="png").read()
+            avatar = Image.open(BytesIO(avatar_bytes))
+            avatar.load()
+            return avatar.convert("RGBA")
+        except (discord.HTTPException, UnidentifiedImageError, OSError) as exc:
+            raise ValueError(f"Avatar: impossibile scaricare o leggere la PFP ({exc})") from exc
+
     async def _build_welcome_image(self, member: discord.Member, image_template: str, background_url: str | None):
         background = await self._get_background(member.guild.id, background_url)
         canvas = background.convert("RGBA")
         width, height = canvas.size
         short_side = min(width, height)
 
-        # Overlay leggero per mantenere leggibili avatar e testo su qualsiasi sfondo.
         overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 58))
         canvas = Image.alpha_composite(canvas, overlay)
 
-        avatar_bytes = await member.display_avatar.replace(size=512, static_format="png").read()
-        avatar = Image.open(BytesIO(avatar_bytes)).convert("RGBA")
-
+        avatar = await self._get_avatar(member)
         avatar_size = max(96, min(int(short_side * 0.30), int(height * 0.42), int(width * 0.34)))
-        avatar = ImageOps.fit(avatar, (avatar_size, avatar_size), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+        avatar = ImageOps.fit(
+            avatar,
+            (avatar_size, avatar_size),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+
         mask = Image.new("L", (avatar_size, avatar_size), 0)
         ImageDraw.Draw(mask).ellipse((0, 0, avatar_size - 1, avatar_size - 1), fill=255)
         avatar.putalpha(mask)
@@ -169,15 +205,18 @@ class Welcome(commands.Cog):
         text_height = sum(line_heights) + line_gap * max(0, len(lines) - 1)
         group_height = avatar_size + avatar_text_gap + text_height
 
-        # Avatar + testo sono trattati come un unico gruppo centrato sull'immagine.
         group_top = max(int(height * 0.05), (height - group_height) // 2)
         avatar_x = (width - avatar_size) // 2
         avatar_y = group_top
 
-        # Bordo circolare proporzionale alla risoluzione.
         border = max(3, int(short_side * 0.007))
         draw.ellipse(
-            (avatar_x - border, avatar_y - border, avatar_x + avatar_size + border, avatar_y + avatar_size + border),
+            (
+                avatar_x - border,
+                avatar_y - border,
+                avatar_x + avatar_size + border,
+                avatar_y + avatar_size + border,
+            ),
             fill=(255, 255, 255, 220),
         )
         canvas.alpha_composite(avatar, (avatar_x, avatar_y))
@@ -197,28 +236,46 @@ class Welcome(commands.Cog):
             y += line_height + line_gap
 
         output = BytesIO()
-        canvas.convert("RGB").save(output, format="JPEG", quality=92, optimize=True)
+        try:
+            canvas.convert("RGB").save(output, format="JPEG", quality=92, optimize=True)
+        except OSError as exc:
+            raise ValueError(f"Output: impossibile creare il JPEG ({exc})") from exc
         output.seek(0)
         return output
 
+    def _set_error(self, message: str):
+        self._last_error = message
+        return False
+
     async def _send_welcome(self, member: discord.Member, *, force: bool = False):
+        self._last_error = None
         data = await self.config.guild(member.guild).all()
+
         if not force and not data.get("enabled"):
-            return False
+            return self._set_error("Welcome disabilitato")
 
         channel_id = data.get("channel_id")
         if not channel_id:
-            return False
+            return self._set_error("Canale welcome non configurato")
+
         channel = member.guild.get_channel(int(channel_id))
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
-            return False
+            return self._set_error("Il canale configurato non esiste o non è testuale")
 
         me = member.guild.me
         if me is None:
-            return False
+            return self._set_error("Impossibile determinare il membro bot nella guild")
+
         perms = channel.permissions_for(me)
-        if not (perms.view_channel and perms.send_messages and perms.attach_files):
-            return False
+        missing = []
+        if not perms.view_channel:
+            missing.append("Visualizza canale")
+        if not perms.send_messages:
+            missing.append("Invia messaggi")
+        if not perms.attach_files:
+            missing.append("Allega file")
+        if missing:
+            return self._set_error("Permessi mancanti: " + ", ".join(missing))
 
         content = self._format_message(member, str(data.get("message") or "Benvenuto {user}!"))
         image_template = str(data.get("image_message") or "Benvenuto {displayname} su {guild}")
@@ -228,17 +285,33 @@ class Welcome(commands.Cog):
             await channel.send(
                 content,
                 file=discord.File(image, filename="welcome.jpg"),
-                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False, replied_user=False),
+                allowed_mentions=discord.AllowedMentions(
+                    users=True,
+                    roles=False,
+                    everyone=False,
+                    replied_user=False,
+                ),
             )
             return True
-        except (discord.Forbidden, discord.HTTPException, aiohttp.ClientError, OSError, ValueError):
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self._last_error = error[:1000]
+            log.exception(
+                "Errore welcome per membro %s (%s) nella guild %s (%s)",
+                member,
+                member.id,
+                member.guild.name,
+                member.guild.id,
+            )
             return False
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         if member.bot:
             return
-        await self._send_welcome(member)
+        ok = await self._send_welcome(member)
+        if not ok and self._last_error:
+            log.warning("Welcome non inviato: %s", self._last_error)
 
     @commands.group(name="welcome", invoke_without_command=True)
     @commands.guild_only()
@@ -294,9 +367,20 @@ class Welcome(commands.Cog):
             return await ctx.send("Passa un URL immagine oppure allega direttamente l'immagine al comando.")
         if not url.lower().startswith(("http://", "https://")):
             return await ctx.send("L'URL dello sfondo deve iniziare con http:// o https://.")
+
+        try:
+            raw = await self._download_image(url, label="Sfondo")
+            test_image = Image.open(BytesIO(raw))
+            test_image.load()
+            width, height = test_image.size
+            if width < 320 or height < 180:
+                return await ctx.send(f"Sfondo troppo piccolo: `{width}x{height}`. Minimo consigliato `320x180`.")
+        except Exception as exc:
+            return await ctx.send(f"Non riesco a usare questo sfondo: `{type(exc).__name__}: {str(exc)[:500]}`")
+
         await self.config.guild(ctx.guild).background_url.set(url)
-        self._background_cache.pop(ctx.guild.id, None)
-        await ctx.send("Sfondo welcome aggiornato. Usa `.welcome preview` per controllare il risultato.")
+        self._background_cache[ctx.guild.id] = (url, raw)
+        await ctx.send(f"Sfondo welcome aggiornato (`{width}x{height}`). Usa `.welcome preview` per controllarlo.")
 
     @welcome.command(name="clearbackground", aliases=["clearbg"])
     @commands.admin_or_permissions(administrator=True)
@@ -338,7 +422,7 @@ class Welcome(commands.Cog):
             "`{account_created}` → creazione account Discord\n"
             "`{joined_at}` → ingresso nel server\n\n"
             "**Esempi**\n"
-            "`.welcome message Benvenuto {user}! Sei il membro numero {member_count}.`\n"
+            "`.welcome message Benvenuto {mention}! Sei il membro numero {member_count}.`\n"
             "`.welcome imagemessage Benvenuto {displayname} su {guild}`\n"
             "`.welcome background https://.../sfondo.png` oppure allega l'immagine al comando."
         )
@@ -365,6 +449,7 @@ class Welcome(commands.Cog):
         data = await self.config.guild(ctx.guild).all()
         channel = ctx.guild.get_channel(data.get("channel_id")) if data.get("channel_id") else None
         await ctx.send(
+            f"Versione cog: **{self.__version__}**\n"
             f"Stato: **{'attivo' if data.get('enabled') else 'disattivato'}**\n"
             f"Canale: {channel.mention if channel else '—'}\n"
             f"Messaggio Discord: `{data.get('message')}`\n"
@@ -377,11 +462,14 @@ class Welcome(commands.Cog):
     @commands.admin_or_permissions(manage_guild=True)
     async def welcome_preview(self, ctx: commands.Context):
         """Invia nel canale configurato un'anteprima usando il tuo account."""
+        await ctx.typing()
         ok = await self._send_welcome(ctx.author, force=True)
         if ok:
-            await ctx.send("Anteprima inviata nel canale welcome.")
+            await ctx.send("✅ Anteprima inviata nel canale welcome.")
         else:
+            error = self._last_error or "Errore sconosciuto"
             await ctx.send(
-                "Non sono riuscito a generare o inviare l'anteprima. Controlla `.welcome status`, "
-                "lo sfondo e i permessi Visualizza canale / Invia messaggi / Allega file."
+                "❌ **Welcome preview fallita.**\n"
+                f"Errore: `{error[:1500]}`\n"
+                "Questo stesso errore è stato scritto anche nei log del bot."
             )

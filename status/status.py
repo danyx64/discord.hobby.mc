@@ -1,0 +1,306 @@
+import asyncio
+import random
+
+import discord
+from redbot.core import Config, commands
+from redbot.core.bot import Red
+
+
+class Status(commands.Cog):
+    """Gestisce tutti gli status del bot: normali, streaming, ordine/random e durata per voce."""
+
+    __author__ = "danyx64"
+    __version__ = "1.0.0"
+
+    VALID_TYPES = {"playing", "watching", "listening", "streaming", "custom"}
+
+    def __init__(self, bot: Red):
+        self.bot = bot
+        self.config = Config.get_conf(self, identifier=918274650341782611, force_registration=True)
+        self.config.register_global(
+            enabled=False,
+            mode="order",
+            default_duration=60,
+            default_stream_url="https://www.twitch.tv/4vv0c4t0",
+            statuses=[],
+            current_index=0,
+        )
+        self._task = None
+        self._wake = asyncio.Event()
+        self._last_random_index = None
+
+    async def cog_load(self):
+        self._start_loop()
+
+    def cog_unload(self):
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+    def _start_loop(self):
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._runner())
+
+    async def _activity_from_entry(self, entry):
+        kind = str(entry.get("type", "playing")).lower()
+        text = str(entry.get("text", "")).strip()[:128] or "Hobby MC"
+
+        if kind == "playing":
+            return discord.Game(name=text)
+        if kind == "watching":
+            return discord.Activity(type=discord.ActivityType.watching, name=text)
+        if kind == "listening":
+            return discord.Activity(type=discord.ActivityType.listening, name=text)
+        if kind == "streaming":
+            url = entry.get("url") or await self.config.default_stream_url()
+            return discord.Streaming(name=text, url=url)
+        if kind == "custom":
+            try:
+                return discord.CustomActivity(name=text)
+            except AttributeError:
+                return discord.Activity(type=discord.ActivityType.custom, name=text)
+        return discord.Game(name=text)
+
+    async def _apply_entry(self, entry):
+        activity = await self._activity_from_entry(entry)
+        # Cambia solo l'attivita': non forza online/idle/dnd.
+        await self.bot.change_presence(activity=activity)
+
+    async def _choose_index(self, statuses, mode, current_index):
+        if not statuses:
+            return None
+
+        if mode == "random":
+            if len(statuses) == 1:
+                idx = 0
+            else:
+                choices = list(range(len(statuses)))
+                if self._last_random_index in choices:
+                    choices.remove(self._last_random_index)
+                idx = random.choice(choices)
+            self._last_random_index = idx
+            return idx
+
+        return current_index % len(statuses)
+
+    async def _runner(self):
+        await self.bot.wait_until_ready()
+        while True:
+            try:
+                data = await self.config.all()
+                if not data.get("enabled") or not data.get("statuses"):
+                    self._wake.clear()
+                    try:
+                        await asyncio.wait_for(self._wake.wait(), timeout=30)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+
+                statuses = data["statuses"]
+                mode = str(data.get("mode", "order")).lower()
+                current_index = int(data.get("current_index", 0))
+                idx = await self._choose_index(statuses, mode, current_index)
+                if idx is None:
+                    await asyncio.sleep(5)
+                    continue
+
+                entry = statuses[idx]
+                await self._apply_entry(entry)
+
+                if mode == "order":
+                    await self.config.current_index.set((idx + 1) % len(statuses))
+
+                duration = int(entry.get("duration") or data.get("default_duration") or 60)
+                duration = max(5, min(duration, 86400))
+
+                self._wake.clear()
+                try:
+                    await asyncio.wait_for(self._wake.wait(), timeout=duration)
+                except asyncio.TimeoutError:
+                    pass
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await asyncio.sleep(10)
+
+    def _notify_loop(self):
+        self._start_loop()
+        self._wake.set()
+
+    @commands.group(name="status", invoke_without_command=True)
+    @commands.is_owner()
+    async def status(self, ctx: commands.Context):
+        """Gestisce tutti gli status del bot."""
+        await ctx.send_help(ctx.command)
+
+    @status.command(name="helpme")
+    async def status_helpme(self, ctx: commands.Context):
+        """Mostra esempi rapidi."""
+        p = ctx.clean_prefix
+        await ctx.send(
+            "**Status unificato**\n"
+            f"`{p}status add playing 60 Giocando su Hobby MC`\n"
+            f"`{p}status add watching 45 437 membri online`\n"
+            f"`{p}status add listening 30 la community`\n"
+            f"`{p}status add streaming 90 Live su Hobby MC`\n"
+            f"`{p}status addstream 60 https://www.twitch.tv/4vv0c4t0 Live su Hobby MC`\n"
+            f"`{p}status mode order` oppure `{p}status mode random`\n"
+            f"`{p}status enable`\n"
+            f"`{p}status list`"
+        )
+
+    @status.command(name="add")
+    async def status_add(self, ctx: commands.Context, kind: str, duration: int, *, text: str):
+        """Aggiunge uno status. Tipi: playing, watching, listening, streaming, custom."""
+        kind = kind.lower()
+        if kind not in self.VALID_TYPES:
+            return await ctx.send("Tipo non valido. Usa: `playing`, `watching`, `listening`, `streaming`, `custom`.")
+        if duration < 5 or duration > 86400:
+            return await ctx.send("La durata deve essere tra 5 e 86400 secondi.")
+        entry = {"type": kind, "text": text[:128], "duration": duration, "url": None}
+        async with self.config.statuses() as statuses:
+            statuses.append(entry)
+            index = len(statuses)
+        self._notify_loop()
+        await ctx.send(f"Status #{index} aggiunto: **{kind}** per **{duration}s** → `{text[:128]}`")
+
+    @status.command(name="addstream")
+    async def status_addstream(self, ctx: commands.Context, duration: int, url: str, *, text: str):
+        """Aggiunge uno status Streaming con URL specifico."""
+        if duration < 5 or duration > 86400:
+            return await ctx.send("La durata deve essere tra 5 e 86400 secondi.")
+        if not url.lower().startswith(("https://twitch.tv/", "https://www.twitch.tv/")):
+            return await ctx.send("Usa un URL Twitch valido.")
+        entry = {"type": "streaming", "text": text[:128], "duration": duration, "url": url}
+        async with self.config.statuses() as statuses:
+            statuses.append(entry)
+            index = len(statuses)
+        self._notify_loop()
+        await ctx.send(f"Streaming #{index} aggiunto per **{duration}s** → `{text[:128]}`")
+
+    @status.command(name="list")
+    async def status_list(self, ctx: commands.Context):
+        """Mostra tutti gli status configurati."""
+        data = await self.config.all()
+        statuses = data.get("statuses", [])
+        if not statuses:
+            return await ctx.send("Nessuno status configurato.")
+
+        lines = []
+        for i, entry in enumerate(statuses, start=1):
+            extra = ""
+            if entry.get("type") == "streaming":
+                extra = f" | {entry.get('url') or data.get('default_stream_url')}"
+            lines.append(
+                f"`#{i}` **{entry.get('type')}** · {entry.get('duration', data.get('default_duration'))}s · {entry.get('text')}{extra}"
+            )
+        await ctx.send("\n".join(lines)[:1900])
+
+    @status.command(name="remove", aliases=["del", "delete"])
+    async def status_remove(self, ctx: commands.Context, index: int):
+        """Rimuove uno status per numero."""
+        async with self.config.statuses() as statuses:
+            if index < 1 or index > len(statuses):
+                return await ctx.send("Indice non valido.")
+            removed = statuses.pop(index - 1)
+        await self.config.current_index.set(0)
+        self._notify_loop()
+        await ctx.send(f"Rimosso: **{removed.get('type')}** → `{removed.get('text')}`")
+
+    @status.command(name="clear")
+    async def status_clear(self, ctx: commands.Context):
+        """Rimuove tutti gli status."""
+        await self.config.statuses.set([])
+        await self.config.current_index.set(0)
+        self._notify_loop()
+        await ctx.send("Tutti gli status sono stati rimossi.")
+
+    @status.command(name="mode")
+    async def status_mode(self, ctx: commands.Context, mode: str):
+        """Imposta ciclo order oppure random."""
+        mode = mode.lower()
+        if mode not in {"order", "random"}:
+            return await ctx.send("Usa `order` oppure `random`.")
+        await self.config.mode.set(mode)
+        await self.config.current_index.set(0)
+        self._last_random_index = None
+        self._notify_loop()
+        await ctx.send(f"Modalita impostata su **{mode}**.")
+
+    @status.command(name="duration")
+    async def status_duration(self, ctx: commands.Context, index: int, seconds: int):
+        """Cambia la durata di uno status specifico."""
+        if seconds < 5 or seconds > 86400:
+            return await ctx.send("La durata deve essere tra 5 e 86400 secondi.")
+        async with self.config.statuses() as statuses:
+            if index < 1 or index > len(statuses):
+                return await ctx.send("Indice non valido.")
+            statuses[index - 1]["duration"] = seconds
+        self._notify_loop()
+        await ctx.send(f"Durata dello status #{index} impostata a **{seconds}s**.")
+
+    @status.command(name="edit")
+    async def status_edit(self, ctx: commands.Context, index: int, *, text: str):
+        """Cambia il testo di uno status."""
+        async with self.config.statuses() as statuses:
+            if index < 1 or index > len(statuses):
+                return await ctx.send("Indice non valido.")
+            statuses[index - 1]["text"] = text[:128]
+        self._notify_loop()
+        await ctx.send(f"Testo dello status #{index} aggiornato.")
+
+    @status.command(name="type")
+    async def status_type(self, ctx: commands.Context, index: int, kind: str):
+        """Cambia il tipo di uno status."""
+        kind = kind.lower()
+        if kind not in self.VALID_TYPES:
+            return await ctx.send("Tipo non valido.")
+        async with self.config.statuses() as statuses:
+            if index < 1 or index > len(statuses):
+                return await ctx.send("Indice non valido.")
+            statuses[index - 1]["type"] = kind
+        self._notify_loop()
+        await ctx.send(f"Tipo dello status #{index} impostato su **{kind}**.")
+
+    @status.command(name="streamurl")
+    async def status_streamurl(self, ctx: commands.Context, url: str):
+        """Imposta l'URL Twitch predefinito per gli status Streaming."""
+        if not url.lower().startswith(("https://twitch.tv/", "https://www.twitch.tv/")):
+            return await ctx.send("Usa un URL Twitch valido.")
+        await self.config.default_stream_url.set(url)
+        self._notify_loop()
+        await ctx.send(f"URL Streaming predefinito impostato su <{url}>.")
+
+    @status.command(name="enable")
+    async def status_enable(self, ctx: commands.Context):
+        """Abilita il ciclo degli status."""
+        if not await self.config.statuses():
+            return await ctx.send("Aggiungi almeno uno status prima di abilitare il ciclo.")
+        await self.config.enabled.set(True)
+        self._notify_loop()
+        await ctx.send("Ciclo status **abilitato**.")
+
+    @status.command(name="disable")
+    async def status_disable(self, ctx: commands.Context):
+        """Disabilita il ciclo e rimuove l'attivita corrente."""
+        await self.config.enabled.set(False)
+        self._notify_loop()
+        await self.bot.change_presence(activity=None)
+        await ctx.send("Ciclo status **disabilitato**.")
+
+    @status.command(name="next")
+    async def status_next(self, ctx: commands.Context):
+        """Passa subito allo status successivo."""
+        self._notify_loop()
+        await ctx.send("Passaggio allo status successivo richiesto.")
+
+    @status.command(name="show")
+    async def status_show(self, ctx: commands.Context):
+        """Mostra la configurazione generale."""
+        data = await self.config.all()
+        await ctx.send(
+            f"Versione: **{self.__version__}**\n"
+            f"Attivo: **{'si' if data.get('enabled') else 'no'}**\n"
+            f"Modalita: **{data.get('mode')}**\n"
+            f"Status configurati: **{len(data.get('statuses', []))}**\n"
+            f"Twitch predefinito: <{data.get('default_stream_url')}>"
+        )

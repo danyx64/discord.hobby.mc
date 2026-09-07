@@ -17,7 +17,7 @@ class Welcome(commands.Cog):
     """Invia un welcome personalizzato con immagine generata automaticamente."""
 
     __author__ = "danyx64"
-    __version__ = "2.1.0"
+    __version__ = "2.2.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -69,12 +69,29 @@ class Welcome(commands.Cog):
 
     @staticmethod
     def _font(size: int, *, bold: bool = True):
-        names = (
-            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-            if bold
-            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        )
+        if bold:
+            names = (
+                "/usr/share/fonts/truetype/inter/Inter-SemiBold.ttf",
+                "/usr/share/fonts/truetype/inter/Inter-Bold.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "Inter-SemiBold.ttf",
+                "NotoSans-SemiBold.ttf",
+                "DejaVuSans-Bold.ttf",
+            )
+        else:
+            names = (
+                "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+                "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "Inter-Regular.ttf",
+                "NotoSans-Regular.ttf",
+                "DejaVuSans.ttf",
+            )
+
         for name in names:
             try:
                 return ImageFont.truetype(name, size=size)
@@ -87,7 +104,7 @@ class Welcome(commands.Cog):
         text = " ".join(text.split()) or "Benvenuto!"
         for size in range(max_size, min_size - 1, -2):
             font = cls._font(size, bold=True)
-            if draw.textbbox((0, 0), text, font=font, stroke_width=max(1, size // 24))[2] <= max_width:
+            if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
                 return font, [text]
 
         font = cls._font(min_size, bold=True)
@@ -96,7 +113,7 @@ class Welcome(commands.Cog):
         current = ""
         for word in words:
             candidate = f"{current} {word}".strip()
-            if draw.textbbox((0, 0), candidate, font=font, stroke_width=1)[2] <= max_width or not current:
+            if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width or not current:
                 current = candidate
             else:
                 lines.append(current)
@@ -107,7 +124,7 @@ class Welcome(commands.Cog):
 
     async def _download_image(self, url: str, *, label: str, max_bytes: int = 12 * 1024 * 1024) -> bytes:
         timeout = aiohttp.ClientTimeout(total=20)
-        headers = {"User-Agent": "Red-DiscordBot Welcome Cog/2.1"}
+        headers = {"User-Agent": "Red-DiscordBot Welcome Cog/2.2"}
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(url, allow_redirects=True) as response:
                 if response.status != 200:
@@ -174,7 +191,8 @@ class Welcome(commands.Cog):
         width, height = canvas.size
         short_side = min(width, height)
 
-        overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 58))
+        # Leggero oscuramento uniforme: niente card, box o bordi pesanti.
+        overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 82))
         canvas = Image.alpha_composite(canvas, overlay)
 
         avatar = await self._get_avatar(member)
@@ -192,15 +210,14 @@ class Welcome(commands.Cog):
 
         draw = ImageDraw.Draw(canvas)
         title = self._format_message(member, image_template, limit=300)
-        max_text_width = int(width * 0.84)
-        max_font = max(28, min(int(short_side * 0.075), 88))
-        min_font = max(18, min(int(short_side * 0.035), 42))
+        max_text_width = int(width * 0.82)
+        max_font = max(30, min(int(short_side * 0.072), 86))
+        min_font = max(20, min(int(short_side * 0.034), 40))
         font, lines = self._fit_text(draw, title, max_text_width, max_font, min_font)
-        stroke = max(1, int(short_side * 0.004))
-        line_gap = max(4, int(short_side * 0.012))
-        avatar_text_gap = max(16, int(short_side * 0.045))
+        line_gap = max(6, int(short_side * 0.014))
+        avatar_text_gap = max(18, int(short_side * 0.042))
 
-        line_boxes = [draw.textbbox((0, 0), line, font=font, stroke_width=stroke) for line in lines]
+        line_boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
         line_heights = [box[3] - box[1] for box in line_boxes]
         text_height = sum(line_heights) + line_gap * max(0, len(lines) - 1)
         group_height = avatar_size + avatar_text_gap + text_height
@@ -209,35 +226,33 @@ class Welcome(commands.Cog):
         avatar_x = (width - avatar_size) // 2
         avatar_y = group_top
 
-        border = max(3, int(short_side * 0.007))
-        draw.ellipse(
-            (
-                avatar_x - border,
-                avatar_y - border,
-                avatar_x + avatar_size + border,
-                avatar_y + avatar_size + border,
-            ),
-            fill=(255, 255, 255, 220),
-        )
+        # Avatar completamente pulito: niente anello o bordo esterno.
         canvas.alpha_composite(avatar, (avatar_x, avatar_y))
 
         y = avatar_y + avatar_size + avatar_text_gap
+        shadow_offset = max(1, int(short_side * 0.003))
         for line, box, line_height in zip(lines, line_boxes, line_heights):
             line_width = box[2] - box[0]
             x = (width - line_width) // 2
+
+            # Ombra morbida e discreta al posto del contorno nero.
+            draw.text(
+                (x + shadow_offset, y + shadow_offset),
+                line,
+                font=font,
+                fill=(0, 0, 0, 125),
+            )
             draw.text(
                 (x, y),
                 line,
                 font=font,
                 fill=(255, 255, 255, 255),
-                stroke_width=stroke,
-                stroke_fill=(0, 0, 0, 210),
             )
             y += line_height + line_gap
 
         output = BytesIO()
         try:
-            canvas.convert("RGB").save(output, format="JPEG", quality=92, optimize=True)
+            canvas.convert("RGB").save(output, format="JPEG", quality=93, optimize=True)
         except OSError as exc:
             raise ValueError(f"Output: impossibile creare il JPEG ({exc})") from exc
         output.seek(0)

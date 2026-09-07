@@ -7,10 +7,10 @@ from redbot.core.bot import Red
 
 
 class Status(commands.Cog):
-    """Gestisce tutti gli status del bot: normali, streaming, ordine/random e durata per voce."""
+    """Gestisce tutti gli status del bot: normali, streaming, ordine/random, durate e placeholder dinamici."""
 
     __author__ = "danyx64"
-    __version__ = "1.0.0"
+    __version__ = "1.1.0"
 
     VALID_TYPES = {"playing", "watching", "listening", "streaming", "custom"}
 
@@ -40,9 +40,37 @@ class Status(commands.Cog):
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._runner())
 
+    def _placeholder_values(self):
+        guilds = list(self.bot.guilds)
+        member_count = sum((guild.member_count or len(guild.members)) for guild in guilds)
+        human_count = sum(1 for guild in guilds for member in guild.members if not member.bot)
+        bot_count = sum(1 for guild in guilds for member in guild.members if member.bot)
+        channel_count = sum(len(guild.channels) for guild in guilds)
+        user_count = len(self.bot.users)
+        bot_name = self.bot.user.name if self.bot.user else "Bot"
+
+        return {
+            "member_count": str(member_count),
+            "members": str(member_count),
+            "human_count": str(human_count),
+            "bot_count": str(bot_count),
+            "guild_count": str(len(guilds)),
+            "server_count": str(len(guilds)),
+            "channel_count": str(channel_count),
+            "user_count": str(user_count),
+            "bot_name": bot_name,
+        }
+
+    def _format_text(self, text: str) -> str:
+        result = str(text)
+        for key, value in self._placeholder_values().items():
+            result = result.replace("{" + key + "}", value)
+        return result[:128]
+
     async def _activity_from_entry(self, entry):
         kind = str(entry.get("type", "playing")).lower()
-        text = str(entry.get("text", "")).strip()[:128] or "Hobby MC"
+        raw_text = str(entry.get("text", "")).strip() or "Hobby MC"
+        text = self._format_text(raw_text)
 
         if kind == "playing":
             return discord.Game(name=text)
@@ -62,13 +90,11 @@ class Status(commands.Cog):
 
     async def _apply_entry(self, entry):
         activity = await self._activity_from_entry(entry)
-        # Cambia solo l'attivita': non forza online/idle/dnd.
         await self.bot.change_presence(activity=activity)
 
     async def _choose_index(self, statuses, mode, current_index):
         if not statuses:
             return None
-
         if mode == "random":
             if len(statuses) == 1:
                 idx = 0
@@ -79,7 +105,6 @@ class Status(commands.Cog):
                 idx = random.choice(choices)
             self._last_random_index = idx
             return idx
-
         return current_index % len(statuses)
 
     async def _runner(self):
@@ -134,23 +159,35 @@ class Status(commands.Cog):
 
     @status.command(name="helpme")
     async def status_helpme(self, ctx: commands.Context):
-        """Mostra esempi rapidi."""
         p = ctx.clean_prefix
         await ctx.send(
             "**Status unificato**\n"
-            f"`{p}status add playing 60 Giocando su Hobby MC`\n"
-            f"`{p}status add watching 45 437 membri online`\n"
-            f"`{p}status add listening 30 la community`\n"
+            f"`{p}status add watching 60 Membri: {{member_count}}`\n"
+            f"`{p}status add playing 45 Su {{guild_count}} server`\n"
+            f"`{p}status add listening 30 {{human_count}} utenti`\n"
             f"`{p}status add streaming 90 Live su Hobby MC`\n"
             f"`{p}status addstream 60 https://www.twitch.tv/4vv0c4t0 Live su Hobby MC`\n"
             f"`{p}status mode order` oppure `{p}status mode random`\n"
-            f"`{p}status enable`\n"
-            f"`{p}status list`"
+            f"`{p}status placeholders`\n"
+            f"`{p}status enable`"
+        )
+
+    @status.command(name="placeholders", aliases=["vars", "variables"])
+    async def status_placeholders(self, ctx: commands.Context):
+        await ctx.send(
+            "**Placeholder dinamici**\n"
+            "`{member_count}` / `{members}` → membri totali nelle guild del bot\n"
+            "`{human_count}` → membri non-bot\n"
+            "`{bot_count}` → bot\n"
+            "`{guild_count}` / `{server_count}` → numero server\n"
+            "`{channel_count}` → canali totali\n"
+            "`{user_count}` → utenti unici visibili al bot\n"
+            "`{bot_name}` → nome del bot\n\n"
+            "I valori vengono ricalcolati ogni volta che lo status entra nel ciclo."
         )
 
     @status.command(name="add")
     async def status_add(self, ctx: commands.Context, kind: str, duration: int, *, text: str):
-        """Aggiunge uno status. Tipi: playing, watching, listening, streaming, custom."""
         kind = kind.lower()
         if kind not in self.VALID_TYPES:
             return await ctx.send("Tipo non valido. Usa: `playing`, `watching`, `listening`, `streaming`, `custom`.")
@@ -165,7 +202,6 @@ class Status(commands.Cog):
 
     @status.command(name="addstream")
     async def status_addstream(self, ctx: commands.Context, duration: int, url: str, *, text: str):
-        """Aggiunge uno status Streaming con URL specifico."""
         if duration < 5 or duration > 86400:
             return await ctx.send("La durata deve essere tra 5 e 86400 secondi.")
         if not url.lower().startswith(("https://twitch.tv/", "https://www.twitch.tv/")):
@@ -179,25 +215,24 @@ class Status(commands.Cog):
 
     @status.command(name="list")
     async def status_list(self, ctx: commands.Context):
-        """Mostra tutti gli status configurati."""
         data = await self.config.all()
         statuses = data.get("statuses", [])
         if not statuses:
             return await ctx.send("Nessuno status configurato.")
-
         lines = []
         for i, entry in enumerate(statuses, start=1):
             extra = ""
             if entry.get("type") == "streaming":
                 extra = f" | {entry.get('url') or data.get('default_stream_url')}"
+            rendered = self._format_text(entry.get("text", ""))
             lines.append(
-                f"`#{i}` **{entry.get('type')}** · {entry.get('duration', data.get('default_duration'))}s · {entry.get('text')}{extra}"
+                f"`#{i}` **{entry.get('type')}** · {entry.get('duration', data.get('default_duration'))}s · "
+                f"`{entry.get('text')}` → **{rendered}**{extra}"
             )
         await ctx.send("\n".join(lines)[:1900])
 
     @status.command(name="remove", aliases=["del", "delete"])
     async def status_remove(self, ctx: commands.Context, index: int):
-        """Rimuove uno status per numero."""
         async with self.config.statuses() as statuses:
             if index < 1 or index > len(statuses):
                 return await ctx.send("Indice non valido.")
@@ -208,7 +243,6 @@ class Status(commands.Cog):
 
     @status.command(name="clear")
     async def status_clear(self, ctx: commands.Context):
-        """Rimuove tutti gli status."""
         await self.config.statuses.set([])
         await self.config.current_index.set(0)
         self._notify_loop()
@@ -216,7 +250,6 @@ class Status(commands.Cog):
 
     @status.command(name="mode")
     async def status_mode(self, ctx: commands.Context, mode: str):
-        """Imposta ciclo order oppure random."""
         mode = mode.lower()
         if mode not in {"order", "random"}:
             return await ctx.send("Usa `order` oppure `random`.")
@@ -228,7 +261,6 @@ class Status(commands.Cog):
 
     @status.command(name="duration")
     async def status_duration(self, ctx: commands.Context, index: int, seconds: int):
-        """Cambia la durata di uno status specifico."""
         if seconds < 5 or seconds > 86400:
             return await ctx.send("La durata deve essere tra 5 e 86400 secondi.")
         async with self.config.statuses() as statuses:
@@ -240,7 +272,6 @@ class Status(commands.Cog):
 
     @status.command(name="edit")
     async def status_edit(self, ctx: commands.Context, index: int, *, text: str):
-        """Cambia il testo di uno status."""
         async with self.config.statuses() as statuses:
             if index < 1 or index > len(statuses):
                 return await ctx.send("Indice non valido.")
@@ -250,7 +281,6 @@ class Status(commands.Cog):
 
     @status.command(name="type")
     async def status_type(self, ctx: commands.Context, index: int, kind: str):
-        """Cambia il tipo di uno status."""
         kind = kind.lower()
         if kind not in self.VALID_TYPES:
             return await ctx.send("Tipo non valido.")
@@ -263,7 +293,6 @@ class Status(commands.Cog):
 
     @status.command(name="streamurl")
     async def status_streamurl(self, ctx: commands.Context, url: str):
-        """Imposta l'URL Twitch predefinito per gli status Streaming."""
         if not url.lower().startswith(("https://twitch.tv/", "https://www.twitch.tv/")):
             return await ctx.send("Usa un URL Twitch valido.")
         await self.config.default_stream_url.set(url)
@@ -272,7 +301,6 @@ class Status(commands.Cog):
 
     @status.command(name="enable")
     async def status_enable(self, ctx: commands.Context):
-        """Abilita il ciclo degli status."""
         if not await self.config.statuses():
             return await ctx.send("Aggiungi almeno uno status prima di abilitare il ciclo.")
         await self.config.enabled.set(True)
@@ -281,7 +309,6 @@ class Status(commands.Cog):
 
     @status.command(name="disable")
     async def status_disable(self, ctx: commands.Context):
-        """Disabilita il ciclo e rimuove l'attivita corrente."""
         await self.config.enabled.set(False)
         self._notify_loop()
         await self.bot.change_presence(activity=None)
@@ -289,13 +316,11 @@ class Status(commands.Cog):
 
     @status.command(name="next")
     async def status_next(self, ctx: commands.Context):
-        """Passa subito allo status successivo."""
         self._notify_loop()
         await ctx.send("Passaggio allo status successivo richiesto.")
 
     @status.command(name="show")
     async def status_show(self, ctx: commands.Context):
-        """Mostra la configurazione generale."""
         data = await self.config.all()
         await ctx.send(
             f"Versione: **{self.__version__}**\n"

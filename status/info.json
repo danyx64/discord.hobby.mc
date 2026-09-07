@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Cog unico per gestire status ciclici Discord e Streaming, con durata per voce, ordine o random e URL Twitch configurabile.",
+  "short": "Status ciclici + Streaming in un solo cog",
+  "install_msg": "Status installato. Usa `[p]status add`, `[p]status mode`, `[p]status enable` e `[p]status helpme`.",
+  "requirements": [],
+  "tags": ["status", "presence", "streaming", "twitch", "cycle", "random"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog salva solo la configurazione globale degli status del bot."
+}

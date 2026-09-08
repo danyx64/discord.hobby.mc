@@ -1,10 +1,10 @@
 {
   "author": ["danyx64"],
-  "description": "Auto-reazioni configurabili per Red-DiscordBot con reazioni normali e super-reazioni BURST, piu canali, utenti specifici e piu emoji per messaggio. Le BURST usano endpoint client Discord non documentati con fallback compatibili.",
-  "install_msg": "AutoReactions installato. Caricalo e usa `[p]autoreact` o `[p]ar`. Prova le super-reazioni con `[p]ar test burst:🔥`.",
-  "short": "Auto-reazioni normali e BURST per canali e utenti.",
-  "end_user_data_statement": "Questo cog salva solo ID di canali, ID utenti e configurazione delle emoji. Non memorizza contenuti dei messaggi.",
+  "description": "Auto-reazioni configurabili per Red-DiscordBot con reazioni normali e super-reazioni BURST, piu canali, utenti specifici, ruoli specifici e piu emoji per messaggio. Le BURST usano endpoint client Discord non documentati con fallback compatibili.",
+  "install_msg": "AutoReactions installato. Caricalo e usa `[p]autoreact` o `[p]ar`. Supporta regole per canali, utenti e ruoli; prova le BURST con `[p]ar test burst:🔥`.",
+  "short": "Auto-reazioni normali e BURST per canali, utenti e ruoli.",
+  "end_user_data_statement": "Questo cog salva solo ID di canali, utenti, ruoli e configurazione delle emoji. Non memorizza contenuti dei messaggi.",
   "min_bot_version": "3.5.0",
   "requirements": [],
-  "tags": ["reaction", "autoreact", "emoji", "burst", "super-reaction", "automation", "utility"]
+  "tags": ["reaction", "autoreact", "emoji", "burst", "super-reaction", "roles", "automation", "utility"]
 }

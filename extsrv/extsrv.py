@@ -3,7 +3,6 @@ from typing import Optional
 
 import aiohttp
 import discord
-from discord import app_commands
 from redbot.core import Config, commands
 
 
@@ -48,19 +47,35 @@ class ExtSrv(commands.Cog):
                 return None, f"Discord API ha restituito HTTP {response.status}."
             return await response.json(), None
 
-    @app_commands.command(name="extsrv", description="Mostra il server Discord esterno monitorato.")
-    @app_commands.guild_only()
-    async def extsrv(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True)
-        invite = await self.config.guild(interaction.guild).invite()
+    @commands.hybrid_command(
+        name="extsrv",
+        with_app_command=True,
+        hidden=True,
+        description="Mostra il server Discord esterno monitorato.",
+    )
+    @commands.guild_only()
+    async def extsrv(self, ctx: commands.Context):
+        """Mostra il server Discord esterno monitorato."""
+        # Il comando testuale esiste solo come supporto tecnico del comando ibrido,
+        # ma viene tenuto nascosto: l'uso pubblico previsto è /extsrv.
+        if ctx.interaction is None:
+            await ctx.send("Usa il comando slash `/extsrv`.", delete_after=8)
+            return
+
+        await ctx.defer()
+        invite = await self.config.guild(ctx.guild).invite()
         if not invite:
-            await interaction.followup.send("Nessun server esterno configurato.", ephemeral=True)
+            await ctx.send("Nessun server esterno configurato.", ephemeral=True)
             return
 
         code = self._invite_code(invite)
+        if not code:
+            await ctx.send("L'invito configurato non è valido.", ephemeral=True)
+            return
+
         data, error = await self._fetch_invite(code)
         if error:
-            await interaction.followup.send(error, ephemeral=True)
+            await ctx.send(error, ephemeral=True)
             return
 
         guild = data.get("guild") or {}
@@ -91,7 +106,7 @@ class ExtSrv(commands.Cog):
             embed.set_thumbnail(url=f"https://cdn.discordapp.com/icons/{guild_id}/{icon_hash}.{ext}?size=256")
 
         embed.set_footer(text="Conteggi approssimativi forniti da Discord")
-        await interaction.followup.send(embed=embed)
+        await ctx.send(embed=embed)
 
     @commands.group(name="extsrvset", invoke_without_command=True)
     @commands.guild_only()

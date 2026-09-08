@@ -38,10 +38,7 @@ class ExtSrv(commands.Cog):
 
     async def _fetch_invite(self, code: str):
         url = f"https://discord.com/api/v10/invites/{code}"
-        params = {
-            "with_counts": "true",
-            "with_expiration": "true",
-        }
+        params = {"with_counts": "true", "with_expiration": "true"}
         async with self.session.get(url, params=params) as response:
             if response.status == 404:
                 return None, "Invito non valido, scaduto o non più disponibile."
@@ -55,20 +52,12 @@ class ExtSrv(commands.Cog):
     @app_commands.guild_only()
     async def extsrv(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True)
-
         invite = await self.config.guild(interaction.guild).invite()
         if not invite:
-            await interaction.followup.send(
-                "Nessun server esterno configurato. Un amministratore deve usare `/extsrvconfig invite`.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("Nessun server esterno configurato.", ephemeral=True)
             return
 
         code = self._invite_code(invite)
-        if not code:
-            await interaction.followup.send("L'invito salvato non è valido.", ephemeral=True)
-            return
-
         data, error = await self._fetch_invite(code)
         if error:
             await interaction.followup.send(error, ephemeral=True)
@@ -86,15 +75,13 @@ class ExtSrv(commands.Cog):
             description=description or "Informazioni pubbliche del server monitorato.",
             color=discord.Color.blurple(),
         )
-
-        if members is not None:
-            embed.add_field(name="Membri", value=f"{members:,}".replace(",", "."), inline=True)
-        else:
-            embed.add_field(name="Membri", value="Non disponibile", inline=True)
-
+        embed.add_field(
+            name="Membri",
+            value=f"{members:,}".replace(",", ".") if members is not None else "Non disponibile",
+            inline=True,
+        )
         if online is not None:
             embed.add_field(name="Online", value=f"{online:,}".replace(",", "."), inline=True)
-
         if guild_id:
             embed.add_field(name="Server ID", value=guild_id, inline=True)
 
@@ -103,72 +90,44 @@ class ExtSrv(commands.Cog):
             ext = "gif" if str(icon_hash).startswith("a_") else "png"
             embed.set_thumbnail(url=f"https://cdn.discordapp.com/icons/{guild_id}/{icon_hash}.{ext}?size=256")
 
-        embed.set_footer(text="Conteggi approssimativi forniti da Discord tramite l'invito configurato")
+        embed.set_footer(text="Conteggi approssimativi forniti da Discord")
         await interaction.followup.send(embed=embed)
 
-    extsrvconfig = app_commands.Group(
-        name="extsrvconfig",
-        description="Configura il server Discord esterno monitorato.",
-        guild_only=True,
-        default_permissions=discord.Permissions(manage_guild=True),
-    )
+    @commands.group(name="extsrvset", invoke_without_command=True)
+    @commands.guild_only()
+    @commands.admin_or_permissions(manage_guild=True)
+    async def extsrvset(self, ctx: commands.Context):
+        """Configura ExtSrv tramite normali comandi con prefisso."""
+        await ctx.send_help(ctx.command)
 
-    @extsrvconfig.command(name="invite", description="Imposta l'invito del server esterno da monitorare.")
-    @app_commands.describe(invito="Link di invito Discord o solo codice invito")
-    async def extsrvconfig_invite(self, interaction: discord.Interaction, invito: str):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                "Ti serve il permesso Gestisci server per modificare questa configurazione.",
-                ephemeral=True,
-            )
-            return
-
+    @extsrvset.command(name="invite")
+    async def extsrvset_invite(self, ctx: commands.Context, *, invito: str):
+        """Imposta il link/codice invito del server esterno."""
         code = self._invite_code(invito)
         if not code:
-            await interaction.response.send_message("Invito Discord non valido.", ephemeral=True)
+            await ctx.send("Invito Discord non valido.")
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
         data, error = await self._fetch_invite(code)
         if error:
-            await interaction.followup.send(error, ephemeral=True)
+            await ctx.send(error)
             return
 
-        await self.config.guild(interaction.guild).invite.set(code)
+        await self.config.guild(ctx.guild).invite.set(code)
         guild = data.get("guild") or {}
-        name = guild.get("name") or "server esterno"
-        await interaction.followup.send(
-            f"Server monitorato impostato su **{name}**. Ora `/extsrv` mostrerà i dati aggiornati on-demand.",
-            ephemeral=True,
-        )
+        await ctx.send(f"Server monitorato impostato su **{guild.get('name') or 'server esterno'}**.")
 
-    @extsrvconfig.command(name="show", description="Mostra la configurazione ExtSrv corrente.")
-    async def extsrvconfig_show(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                "Ti serve il permesso Gestisci server per vedere questa configurazione.",
-                ephemeral=True,
-            )
-            return
-
-        invite = await self.config.guild(interaction.guild).invite()
+    @extsrvset.command(name="show")
+    async def extsrvset_show(self, ctx: commands.Context):
+        """Mostra l'invito attualmente configurato."""
+        invite = await self.config.guild(ctx.guild).invite()
         if not invite:
-            await interaction.response.send_message("Nessun invito configurato.", ephemeral=True)
+            await ctx.send("Nessun invito configurato.")
             return
+        await ctx.send(f"Invito monitorato: `https://discord.gg/{invite}`")
 
-        await interaction.response.send_message(
-            f"Invito monitorato: `https://discord.gg/{invite}`",
-            ephemeral=True,
-        )
-
-    @extsrvconfig.command(name="clear", description="Rimuove il server esterno monitorato.")
-    async def extsrvconfig_clear(self, interaction: discord.Interaction):
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                "Ti serve il permesso Gestisci server per modificare questa configurazione.",
-                ephemeral=True,
-            )
-            return
-
-        await self.config.guild(interaction.guild).invite.clear()
-        await interaction.response.send_message("Configurazione ExtSrv rimossa.", ephemeral=True)
+    @extsrvset.command(name="clear")
+    async def extsrvset_clear(self, ctx: commands.Context):
+        """Rimuove la configurazione corrente."""
+        await self.config.guild(ctx.guild).invite.clear()
+        await ctx.send("Configurazione ExtSrv rimossa.")

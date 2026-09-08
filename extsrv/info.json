@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Mostra tramite slash command le informazioni pubbliche di un server Discord esterno configurato tramite invito, senza che il bot debba essere presente nel server monitorato.",
+  "install_msg": "ExtSrv installato. Carica il cog, imposta l'invito con `/extsrvconfig invite` e usa `/extsrv`.",
+  "short": "Monitoraggio on-demand di un server Discord esterno.",
+  "end_user_data_statement": "Questo cog salva solo il link/codice invito configurato per ogni server Discord in cui viene usato. Non memorizza dati personali degli utenti.",
+  "min_bot_version": "3.5.0",
+  "requirements": [],
+  "tags": ["discord", "invite", "members", "server", "monitor", "slash"]
+}

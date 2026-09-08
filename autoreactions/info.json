@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Auto-reazioni configurabili per Red-DiscordBot: supporta piu canali, regole per utenti specifici e piu emoji per ogni messaggio. Le super-reazioni Discord non possono essere create dai bot tramite l'API ufficiale e vengono quindi segnalate come non supportate.",
+  "install_msg": "AutoReactions installato. Caricalo e usa `[p]autoreact` oppure `[p]ar` per configurarlo.",
+  "short": "Auto-reazioni per canali e utenti specifici.",
+  "end_user_data_statement": "Questo cog salva solo ID di canali, ID utenti e configurazione delle emoji. Non memorizza contenuti dei messaggi.",
+  "min_bot_version": "3.5.0",
+  "requirements": [],
+  "tags": ["reaction", "autoreact", "emoji", "automation", "utility"]
+}

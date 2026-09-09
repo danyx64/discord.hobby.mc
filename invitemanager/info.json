@@ -2,7 +2,7 @@
   "author": ["danyx64"],
   "description": "Gestione avanzata e sincronizzata degli inviti Discord per Red-DiscordBot: crea inviti permanenti in un canale configurato, mostra una tabella degli inviti attivi, salva tipo, scopo, creatore e assegnatario, consente modifica/eliminazione e sincronizza gli inviti con Discord.",
   "short": "Gestione sincronizzata degli inviti permanenti",
-  "install_msg": "InviteManager installato. Prima imposta il canale con `[p]invite channel ID_CANALE`, poi crea inviti con `[p]invite create <tipo> <utente|ruolo|bot|progetto|altro> <assegnato> <scopo>`. Usa `[p]invite list`, `[p]invite edit`, `[p]invite delete` e `[p]invite sync` per gestirli.",
+  "install_msg": "InviteManager installato. Tutti i comandi sono sotto `[p]invset`. Prima imposta il canale con `[p]invset channel ID_CANALE`, poi crea inviti con `[p]invset create <tipo> <utente|ruolo|bot|progetto|altro> <assegnato> <scopo>`. Usa `[p]invset list`, `[p]invset edit`, `[p]invset delete`, `[p]invset info`, `[p]invset status` e `[p]invset sync` per gestirli.",
   "requirements": [],
   "tags": ["inviti", "invite", "moderazione", "utility", "tracking", "sync", "italiano"],
   "type": "COG",

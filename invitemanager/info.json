@@ -1,10 +1,10 @@
 {
   "author": ["danyx64"],
-  "description": "Gestione avanzata e sincronizzata degli inviti Discord per Red-DiscordBot: crea inviti permanenti in un canale configurato, mostra una tabella degli inviti attivi, salva tipo, scopo, creatore e assegnatario, consente modifica/eliminazione e sincronizza gli inviti con Discord.",
+  "description": "Gestione avanzata e sincronizzata degli inviti Discord per Red-DiscordBot: crea inviti permanenti in un canale configurato, ordina la lista alfabeticamente per scopo, traccia utilizzi e utenti entrati, consente modifica/eliminazione e sincronizza gli inviti con Discord.",
   "short": "Gestione sincronizzata degli inviti permanenti",
-  "install_msg": "InviteManager installato. Tutti i comandi sono sotto `[p]invset`. Prima imposta il canale con `[p]invset channel ID_CANALE`, poi crea inviti con `[p]invset create <tipo> <utente|ruolo|bot|progetto|altro> <assegnato> <scopo>`. Usa `[p]invset list`, `[p]invset edit`, `[p]invset delete`, `[p]invset info`, `[p]invset status` e `[p]invset sync` per gestirli.",
+  "install_msg": "InviteManager installato. Tutti i comandi sono sotto `[p]invset`. Prima imposta il canale con `[p]invset channel ID_CANALE`. Crea un invito con `[p]invset create <tipo> <scopo>`. Usa `[p]invset list`, `[p]invset users CODICE`, `[p]invset edit CODICE <tipo|scopo> VALORE`, `[p]invset delete CODICE`, `[p]invset info CODICE`, `[p]invset status` e `[p]invset sync`.",
   "requirements": [],
   "tags": ["inviti", "invite", "moderazione", "utility", "tracking", "sync", "italiano"],
   "type": "COG",
-  "end_user_data_statement": "Questo cog salva localmente metadati sugli inviti: codice invito, canale, tipo, scopo, creatore, assegnatario, numero di utilizzi, ultimo membro entrato tramite l'invito quando rilevabile e dati di modifica/revoca."
+  "end_user_data_statement": "Questo cog salva localmente metadati sugli inviti: codice invito, canale, tipo, scopo, creatore, numero di utilizzi, storico degli utenti entrati tramite l'invito quando rilevabile e dati di modifica/revoca."
 }

@@ -1,0 +1,10 @@
+{
+  "author": ["danyx64"],
+  "description": "Gestione avanzata degli inviti Discord per Red-DiscordBot: crea inviti permanenti senza scadenza e senza limite di utilizzi, salva tipo, scopo, creatore, assegnatario e traccia gli utilizzi.",
+  "short": "Gestione inviti permanenti con metadati",
+  "install_msg": "InviteManager installato. Usa `[p]invite create #canale <tipo> <persona|ruolo|bot|progetto|altro> <assegnato> <scopo>` per creare un invito permanente.",
+  "requirements": [],
+  "tags": ["inviti", "invite", "moderazione", "utility", "tracking", "italiano"],
+  "type": "COG",
+  "end_user_data_statement": "Questo cog salva localmente metadati sugli inviti creati: codice invito, canale, tipo, scopo, creatore, assegnatario, numero di utilizzi e ultimo membro entrato tramite l'invito quando rilevabile."
+}

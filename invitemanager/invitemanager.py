@@ -17,7 +17,7 @@ class InviteManager(commands.Cog):
     """Gestione centralizzata e sincronizzata degli inviti Discord."""
 
     __author__ = "danyx64"
-    __version__ = "1.1.0"
+    __version__ = "1.2.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -120,18 +120,18 @@ class InviteManager(commands.Cog):
     async def before_auto_sync(self) -> None:
         await self.bot.wait_until_red_ready()
 
-    @commands.group(name="invite", aliases=["inviti", "invitemanager"], invoke_without_command=True)
+    @commands.group(name="invset", invoke_without_command=True)
     @commands.guild_only()
-    async def invite(self, ctx: commands.Context) -> None:
-        """Gestisce gli inviti del server."""
+    async def invset(self, ctx: commands.Context) -> None:
+        """Gestisce gli inviti del server senza usare il comando invite."""
         await ctx.send_help(ctx.command)
 
-    @invite.command(name="channel", aliases=["setchannel", "canale"])
+    @invset.command(name="channel", aliases=["setchannel", "canale"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
+    async def invset_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
         """Imposta il canale in cui InviteManager deve creare tutti i nuovi inviti.
 
-        Esempio: [p]invite channel 123456789012345678
+        Esempio: [p]invset channel 123456789012345678
         """
         if not channel.permissions_for(ctx.guild.me).create_instant_invite:
             await ctx.send("Non ho il permesso **Crea invito** in quel canale.")
@@ -139,12 +139,12 @@ class InviteManager(commands.Cog):
         await self.config.guild(ctx.guild).invite_channel_id.set(channel.id)
         await ctx.send(f"Canale inviti impostato su {channel.mention} (`{channel.id}`). Da ora gli inviti creati dal cog useranno sempre questo canale.")
 
-    @invite.command(name="create", aliases=["crea", "new"])
+    @invset.command(name="create", aliases=["crea", "new"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_create(self, ctx: commands.Context, invite_type: str, assignee_type: str, assignee: str, *, purpose: str) -> None:
+    async def invset_create(self, ctx: commands.Context, invite_type: str, assignee_type: str, assignee: str, *, purpose: str) -> None:
         """Crea un invito permanente nel canale configurato.
 
-        Sintassi: [p]invite create <tipo> <utente|ruolo|bot|progetto|altro> <assegnato> <scopo>
+        Sintassi: [p]invset create <tipo> <utente|ruolo|bot|progetto|altro> <assegnato> <scopo>
         """
         assignee_type = assignee_type.lower().strip()
         if assignee_type == "persona":
@@ -155,11 +155,11 @@ class InviteManager(commands.Cog):
 
         channel_id = await self.config.guild(ctx.guild).invite_channel_id()
         if not channel_id:
-            await ctx.send("Prima configura il canale inviti con `[p]invite channel ID_CANALE`.")
+            await ctx.send("Prima configura il canale inviti con `[p]invset channel ID_CANALE`.")
             return
         channel = ctx.guild.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
-            await ctx.send("Il canale inviti configurato non esiste più. Reimpostalo con `[p]invite channel ID_CANALE`.")
+            await ctx.send("Il canale inviti configurato non esiste più. Reimpostalo con `[p]invset channel ID_CANALE`.")
             return
         if not channel.permissions_for(ctx.guild.me).create_instant_invite:
             await ctx.send("Non ho il permesso **Crea invito** nel canale inviti configurato.")
@@ -215,9 +215,9 @@ class InviteManager(commands.Cog):
         embed.set_footer(text=f"Codice: {created.code}")
         await ctx.send(embed=embed)
 
-    @invite.command(name="list", aliases=["lista", "ls"])
+    @invset.command(name="list", aliases=["lista", "ls"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_list(self, ctx: commands.Context) -> None:
+    async def invset_list(self, ctx: commands.Context) -> None:
         """Mostra gli inviti attivi in formato tabella."""
         await self._sync_guild(ctx.guild)
         invites = await self.config.guild(ctx.guild).invites()
@@ -248,9 +248,9 @@ class InviteManager(commands.Cog):
             block = "\n".join([header, separator, *chunks[index:index + 15]])
             await ctx.send(f"```text\n{block}\n```")
 
-    @invite.command(name="info")
+    @invset.command(name="info")
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_info(self, ctx: commands.Context, code: str) -> None:
+    async def invset_info(self, ctx: commands.Context, code: str) -> None:
         """Mostra i dettagli di un invito."""
         code = self._normalize_code(code)
         await self._sync_guild(ctx.guild)
@@ -278,12 +278,12 @@ class InviteManager(commands.Cog):
             embed.add_field(name="Ultimo utilizzo", value=f"{data['last_used_by_name']} ({data.get('last_used_at', '-')})", inline=False)
         await ctx.send(embed=embed)
 
-    @invite.command(name="edit", aliases=["modifica"])
+    @invset.command(name="edit", aliases=["modifica"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_edit(self, ctx: commands.Context, code: str, field: str, *, value: str) -> None:
+    async def invset_edit(self, ctx: commands.Context, code: str, field: str, *, value: str) -> None:
         """Modifica tipo, scopo, assegnatario o tipo assegnatario.
 
-        Esempio: [p]invite edit ABC123 scopo Accesso bot backup
+        Esempio: [p]invset edit ABC123 scopo Accesso bot backup
         """
         code = self._normalize_code(code)
         target = {
@@ -317,9 +317,9 @@ class InviteManager(commands.Cog):
         await self._save_record(ctx.guild, code, data)
         await ctx.send(f"Invito `{code}` aggiornato: **{field}** = `{value}`.")
 
-    @invite.command(name="delete", aliases=["elimina", "revoke", "revoca"])
+    @invset.command(name="delete", aliases=["elimina", "revoke", "revoca"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_delete(self, ctx: commands.Context, code: str) -> None:
+    async def invset_delete(self, ctx: commands.Context, code: str) -> None:
         """Elimina/revoca l'invito su Discord mantenendolo nello storico interno."""
         code = self._normalize_code(code)
         data = await self._get_record(ctx.guild, code)
@@ -345,9 +345,9 @@ class InviteManager(commands.Cog):
         self._invite_cache.setdefault(ctx.guild.id, {}).pop(code, None)
         await ctx.send(f"Invito `{code}` eliminato da Discord e segnato come revocato nello storico.")
 
-    @invite.command(name="purge", aliases=["dimentica"])
+    @invset.command(name="purge", aliases=["dimentica"])
     @commands.guildowner()
-    async def invite_purge(self, ctx: commands.Context, code: str) -> None:
+    async def invset_purge(self, ctx: commands.Context, code: str) -> None:
         """Cancella definitivamente anche lo storico interno di un invito."""
         code = self._normalize_code(code)
         if not await self._get_record(ctx.guild, code):
@@ -356,9 +356,9 @@ class InviteManager(commands.Cog):
         await self._delete_record(ctx.guild, code)
         await ctx.send(f"Record `{code}` eliminato definitivamente dall'archivio.")
 
-    @invite.command(name="sync", aliases=["sincronizza"])
+    @invset.command(name="sync", aliases=["sincronizza"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_sync(self, ctx: commands.Context) -> None:
+    async def invset_sync(self, ctx: commands.Context) -> None:
         """Forza la sincronizzazione immediata degli inviti Discord."""
         active, imported, revoked = await self._sync_guild(ctx.guild)
         await ctx.send(
@@ -366,9 +366,9 @@ class InviteManager(commands.Cog):
             f"**{imported}** importati, **{revoked}** segnati come revocati."
         )
 
-    @invite.command(name="status")
+    @invset.command(name="status")
     @commands.has_guild_permissions(manage_guild=True)
-    async def invite_status(self, ctx: commands.Context) -> None:
+    async def invset_status(self, ctx: commands.Context) -> None:
         """Mostra configurazione e stato di InviteManager."""
         channel_id = await self.config.guild(ctx.guild).invite_channel_id()
         channel = ctx.guild.get_channel(channel_id) if channel_id else None

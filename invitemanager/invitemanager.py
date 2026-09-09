@@ -17,7 +17,7 @@ class InviteManager(commands.Cog):
     """Gestione centralizzata e sincronizzata degli inviti Discord."""
 
     __author__ = "danyx64"
-    __version__ = "1.2.0"
+    __version__ = "1.3.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -84,6 +84,7 @@ class InviteManager(commands.Cog):
                         "assigned_to": "non assegnato",
                         "created_at": invite.created_at.isoformat() if invite.created_at else self._now(),
                         "uses": invite.uses or 0,
+                        "joined_users": [],
                         "last_used_by_id": None,
                         "last_used_by_name": None,
                         "last_used_at": None,
@@ -93,6 +94,7 @@ class InviteManager(commands.Cog):
                     }
                     imported += 1
                 else:
+                    data.setdefault("joined_users", [])
                     data["url"] = invite.url
                     data["channel_id"] = getattr(invite.channel, "id", data.get("channel_id"))
                     data["uses"] = invite.uses or 0
@@ -101,6 +103,7 @@ class InviteManager(commands.Cog):
                 stored[code] = data
 
             for code, data in stored.items():
+                data.setdefault("joined_users", [])
                 if code not in live_by_code and not data.get("revoked"):
                     data["revoked"] = True
                     data["revoked_at"] = self._now()
@@ -108,7 +111,9 @@ class InviteManager(commands.Cog):
                     revoked += 1
 
             await self.config.guild(guild).invites.set(stored)
-            self._invite_cache[guild.id] = {code: invite.uses or 0 for code, invite in live_by_code.items()}
+            self._invite_cache[guild.id] = {
+                code: invite.uses or 0 for code, invite in live_by_code.items()
+            }
             return len(live_invites), imported, revoked
 
     @tasks.loop(minutes=5)
@@ -129,28 +134,36 @@ class InviteManager(commands.Cog):
     @invset.command(name="channel", aliases=["setchannel", "canale"])
     @commands.has_guild_permissions(manage_guild=True)
     async def invset_channel(self, ctx: commands.Context, channel: discord.TextChannel) -> None:
-        """Imposta il canale in cui InviteManager deve creare tutti i nuovi inviti.
-
-        Esempio: [p]invset channel 123456789012345678
-        """
+        """Imposta il canale usato dal cog per creare i nuovi inviti."""
         if not channel.permissions_for(ctx.guild.me).create_instant_invite:
             await ctx.send("Non ho il permesso **Crea invito** in quel canale.")
             return
         await self.config.guild(ctx.guild).invite_channel_id.set(channel.id)
-        await ctx.send(f"Canale inviti impostato su {channel.mention} (`{channel.id}`). Da ora gli inviti creati dal cog useranno sempre questo canale.")
+        await ctx.send(
+            f"Canale inviti impostato su {channel.mention} (`{channel.id}`). "
+            "Da ora gli inviti creati dal cog useranno sempre questo canale."
+        )
 
     @invset.command(name="create", aliases=["crea", "new"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invset_create(self, ctx: commands.Context, invite_type: str, assignee_type: str, assignee: str, *, purpose: str) -> None:
-        """Crea un invito permanente nel canale configurato.
-
-        Sintassi: [p]invset create <tipo> <utente|ruolo|bot|progetto|altro> <assegnato> <scopo>
-        """
+    async def invset_create(
+        self,
+        ctx: commands.Context,
+        invite_type: str,
+        assignee_type: str,
+        assignee: str,
+        *,
+        purpose: str,
+    ) -> None:
+        """Crea un invito permanente nel canale configurato."""
         assignee_type = assignee_type.lower().strip()
         if assignee_type == "persona":
             assignee_type = "utente"
         if assignee_type not in VALID_ASSIGNEE_TYPES:
-            await ctx.send(f"Tipo assegnatario non valido. Usa uno tra: {', '.join(sorted(VALID_ASSIGNEE_TYPES))}.")
+            await ctx.send(
+                f"Tipo assegnatario non valido. Usa uno tra: "
+                f"{', '.join(sorted(VALID_ASSIGNEE_TYPES))}."
+            )
             return
 
         channel_id = await self.config.guild(ctx.guild).invite_channel_id()
@@ -159,13 +172,19 @@ class InviteManager(commands.Cog):
             return
         channel = ctx.guild.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
-            await ctx.send("Il canale inviti configurato non esiste più. Reimpostalo con `[p]invset channel ID_CANALE`.")
+            await ctx.send(
+                "Il canale inviti configurato non esiste più. "
+                "Reimpostalo con `[p]invset channel ID_CANALE`."
+            )
             return
         if not channel.permissions_for(ctx.guild.me).create_instant_invite:
             await ctx.send("Non ho il permesso **Crea invito** nel canale inviti configurato.")
             return
 
-        reason = f"InviteManager: {invite_type} | {purpose} | creato da {ctx.author} ({ctx.author.id})"
+        reason = (
+            f"InviteManager: {invite_type} | {purpose} | "
+            f"creato da {ctx.author} ({ctx.author.id})"
+        )
         try:
             created = await channel.create_invite(
                 max_age=0,
@@ -193,6 +212,7 @@ class InviteManager(commands.Cog):
             "assigned_to": assignee,
             "created_at": self._now(),
             "uses": created.uses or 0,
+            "joined_users": [],
             "last_used_by_id": None,
             "last_used_by_name": None,
             "last_used_at": None,
@@ -218,35 +238,82 @@ class InviteManager(commands.Cog):
     @invset.command(name="list", aliases=["lista", "ls"])
     @commands.has_guild_permissions(manage_guild=True)
     async def invset_list(self, ctx: commands.Context) -> None:
-        """Mostra gli inviti attivi in formato tabella."""
+        """Mostra codice, creatore, scopo e numero di utilizzi degli inviti attivi."""
         await self._sync_guild(ctx.guild)
         invites = await self.config.guild(ctx.guild).invites()
         rows = []
-        for code, data in sorted(invites.items(), key=lambda item: item[1].get("created_at", "")):
+        for code, data in sorted(
+            invites.items(), key=lambda item: item[1].get("created_at", "")
+        ):
             if data.get("revoked"):
                 continue
             creator = data.get("created_by_name") or str(data.get("created_by_id") or "-")
             purpose = data.get("purpose", "-")
-            assigned = f"{data.get('assigned_type', '-')}: {data.get('assigned_to', '-')}"
-            rows.append((code, creator, purpose, assigned))
+            uses = int(data.get("uses", 0) or 0)
+            rows.append((code, creator, purpose, uses))
 
         if not rows:
             await ctx.send("Nessun invito attivo.")
             return
 
-        header = f"{'CODICE':<11} | {'CREATORE':<18} | {'SCOPO':<28} | ASSEGNATO A"
-        separator = "-" * 90
-        chunks = []
-        for code, creator, purpose, assigned in rows:
-            creator = creator[:18]
-            purpose = purpose[:28]
-            assigned = assigned[:28]
-            line = f"{code[:11]:<11} | {creator:<18} | {purpose:<28} | {assigned}"
-            chunks.append(line)
+        header = f"{'CODICE':<11} | {'CREATORE':<18} | {'SCOPO':<34} | {'USI':>5}"
+        separator = "-" * 78
+        lines = []
+        for code, creator, purpose, uses in rows:
+            line = (
+                f"{code[:11]:<11} | {creator[:18]:<18} | "
+                f"{purpose[:34]:<34} | {uses:>5}"
+            )
+            lines.append(line)
 
-        for index in range(0, len(chunks), 15):
-            block = "\n".join([header, separator, *chunks[index:index + 15]])
+        for index in range(0, len(lines), 15):
+            block = "\n".join([header, separator, *lines[index:index + 15]])
             await ctx.send(f"```text\n{block}\n```")
+
+    @invset.command(name="users", aliases=["usedby", "utenti", "utilizzatori"])
+    @commands.has_guild_permissions(manage_guild=True)
+    async def invset_users(self, ctx: commands.Context, code: str) -> None:
+        """Mostra gli utenti registrati come entrati tramite un certo invito."""
+        code = self._normalize_code(code)
+        data = await self._get_record(ctx.guild, code)
+        if not data:
+            await ctx.send("Invito non trovato.")
+            return
+
+        joined_users = data.get("joined_users", [])
+        if not joined_users:
+            await ctx.send(
+                f"Nessun utente registrato per `{code}`. "
+                "Lo storico nominativo viene raccolto dal momento in cui questa funzione è attiva."
+            )
+            return
+
+        header = f"{'UTENTE':<24} | {'ID':<20} | DATA INGRESSO"
+        separator = "-" * 78
+        lines = []
+        for entry in joined_users:
+            user_id = entry.get("user_id")
+            member = ctx.guild.get_member(user_id) if user_id else None
+            name = str(member) if member else entry.get("user_name", "Sconosciuto")
+            joined_at = entry.get("joined_at", "-")
+            if joined_at != "-":
+                try:
+                    dt = datetime.fromisoformat(joined_at)
+                    joined_at = dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                except ValueError:
+                    pass
+            lines.append(
+                f"{name[:24]:<24} | {str(user_id or '-'):<20} | {joined_at}"
+            )
+
+        for index in range(0, len(lines), 15):
+            block = "\n".join([header, separator, *lines[index:index + 15]])
+            await ctx.send(f"```text\n{block}\n```")
+
+        await ctx.send(
+            f"Invito `{code}`: **{len(joined_users)}** ingressi nominativi registrati / "
+            f"**{int(data.get('uses', 0) or 0)}** utilizzi totali riportati da Discord."
+        )
 
     @invset.command(name="info")
     @commands.has_guild_permissions(manage_guild=True)
@@ -259,32 +326,64 @@ class InviteManager(commands.Cog):
             await ctx.send("Invito non trovato.")
             return
 
-        creator = ctx.guild.get_member(data.get("created_by_id")) if data.get("created_by_id") else None
+        creator = (
+            ctx.guild.get_member(data.get("created_by_id"))
+            if data.get("created_by_id")
+            else None
+        )
         creator_value = creator.mention if creator else data.get("created_by_name", "Sconosciuto")
         channel = ctx.guild.get_channel(data.get("channel_id"))
 
         embed = discord.Embed(title=f"Invito {code}", colour=discord.Colour.blurple())
         embed.add_field(name="URL", value=data.get("url", f"https://discord.gg/{code}"), inline=False)
-        embed.add_field(name="Canale", value=channel.mention if channel else str(data.get("channel_id", "-")), inline=True)
+        embed.add_field(
+            name="Canale",
+            value=channel.mention if channel else str(data.get("channel_id", "-")),
+            inline=True,
+        )
         embed.add_field(name="Tipo", value=data.get("type", "-"), inline=True)
         embed.add_field(name="Creatore", value=creator_value, inline=True)
         embed.add_field(name="Scopo", value=data.get("purpose", "-"), inline=False)
-        embed.add_field(name="Assegnato", value=f"{data.get('assigned_type', '-')}: {data.get('assigned_to', '-')}", inline=False)
+        embed.add_field(
+            name="Assegnato",
+            value=f"{data.get('assigned_type', '-')}: {data.get('assigned_to', '-')}",
+            inline=False,
+        )
         embed.add_field(name="Utilizzi", value=str(data.get("uses", 0)), inline=True)
-        embed.add_field(name="Scadenza", value="Mai" if data.get("permanent") else "Non permanente", inline=True)
-        embed.add_field(name="Stato", value="Revocato" if data.get("revoked") else "Attivo", inline=True)
-        embed.add_field(name="Gestito dal cog", value="Sì" if data.get("managed_by_cog") else "Importato", inline=True)
+        embed.add_field(
+            name="Utenti tracciati",
+            value=str(len(data.get("joined_users", []))),
+            inline=True,
+        )
+        embed.add_field(
+            name="Scadenza",
+            value="Mai" if data.get("permanent") else "Non permanente",
+            inline=True,
+        )
+        embed.add_field(
+            name="Stato",
+            value="Revocato" if data.get("revoked") else "Attivo",
+            inline=True,
+        )
+        embed.add_field(
+            name="Gestito dal cog",
+            value="Sì" if data.get("managed_by_cog") else "Importato",
+            inline=True,
+        )
         if data.get("last_used_by_name"):
-            embed.add_field(name="Ultimo utilizzo", value=f"{data['last_used_by_name']} ({data.get('last_used_at', '-')})", inline=False)
+            embed.add_field(
+                name="Ultimo utilizzo",
+                value=f"{data['last_used_by_name']} ({data.get('last_used_at', '-')})",
+                inline=False,
+            )
         await ctx.send(embed=embed)
 
     @invset.command(name="edit", aliases=["modifica"])
     @commands.has_guild_permissions(manage_guild=True)
-    async def invset_edit(self, ctx: commands.Context, code: str, field: str, *, value: str) -> None:
-        """Modifica tipo, scopo, assegnatario o tipo assegnatario.
-
-        Esempio: [p]invset edit ABC123 scopo Accesso bot backup
-        """
+    async def invset_edit(
+        self, ctx: commands.Context, code: str, field: str, *, value: str
+    ) -> None:
+        """Modifica tipo, scopo, assegnatario o tipo assegnatario."""
         code = self._normalize_code(code)
         target = {
             "tipo": "type",
@@ -304,7 +403,10 @@ class InviteManager(commands.Cog):
             if value == "persona":
                 value = "utente"
             if value not in VALID_ASSIGNEE_TYPES:
-                await ctx.send(f"Tipo assegnatario non valido. Usa: {', '.join(sorted(VALID_ASSIGNEE_TYPES))}.")
+                await ctx.send(
+                    f"Tipo assegnatario non valido. Usa: "
+                    f"{', '.join(sorted(VALID_ASSIGNEE_TYPES))}."
+                )
                 return
 
         data = await self._get_record(ctx.guild, code)
@@ -330,9 +432,13 @@ class InviteManager(commands.Cog):
         try:
             live = next((i for i in await ctx.guild.invites() if i.code == code), None)
             if live:
-                await live.delete(reason=f"InviteManager: eliminato da {ctx.author} ({ctx.author.id})")
+                await live.delete(
+                    reason=f"InviteManager: eliminato da {ctx.author} ({ctx.author.id})"
+                )
         except discord.Forbidden:
-            await ctx.send("Non ho il permesso **Gestisci server/inviti** per eliminare questo invito.")
+            await ctx.send(
+                "Non ho il permesso **Gestisci server/inviti** per eliminare questo invito."
+            )
             return
         except discord.HTTPException as exc:
             await ctx.send(f"Errore Discord durante l'eliminazione: `{exc}`")
@@ -343,7 +449,9 @@ class InviteManager(commands.Cog):
         data["revoked_by_id"] = ctx.author.id
         await self._save_record(ctx.guild, code, data)
         self._invite_cache.setdefault(ctx.guild.id, {}).pop(code, None)
-        await ctx.send(f"Invito `{code}` eliminato da Discord e segnato come revocato nello storico.")
+        await ctx.send(
+            f"Invito `{code}` eliminato da Discord e segnato come revocato nello storico."
+        )
 
     @invset.command(name="purge", aliases=["dimentica"])
     @commands.guildowner()
@@ -374,9 +482,11 @@ class InviteManager(commands.Cog):
         channel = ctx.guild.get_channel(channel_id) if channel_id else None
         invites = await self.config.guild(ctx.guild).invites()
         active = sum(1 for d in invites.values() if not d.get("revoked"))
+        tracked = sum(len(d.get("joined_users", [])) for d in invites.values())
         await ctx.send(
             f"**Canale inviti:** {channel.mention if channel else 'non configurato'}\n"
             f"**Inviti attivi registrati:** {active}\n"
+            f"**Ingressi nominativi tracciati:** {tracked}\n"
             f"**Sync automatico:** attivo ogni 5 minuti + eventi Discord"
         )
 
@@ -391,7 +501,11 @@ class InviteManager(commands.Cog):
 
         current = {i.code: i.uses or 0 for i in current_invites}
         used = next(
-            ((i.code, i.uses or 0) for i in current_invites if (i.uses or 0) > before.get(i.code, 0)),
+            (
+                (i.code, i.uses or 0)
+                for i in current_invites
+                if (i.uses or 0) > before.get(i.code, 0)
+            ),
             None,
         )
         self._invite_cache[guild.id] = current
@@ -399,14 +513,26 @@ class InviteManager(commands.Cog):
             return
 
         data = await self._get_record(guild, used[0])
-        if data:
-            data["uses"] = used[1]
-            data["last_used_by_id"] = member.id
-            data["last_used_by_name"] = str(member)
-            data["last_used_at"] = self._now()
-            await self._save_record(guild, used[0], data)
-        else:
+        if not data:
             await self._sync_guild(guild)
+            data = await self._get_record(guild, used[0])
+            if not data:
+                return
+
+        now = self._now()
+        data["uses"] = used[1]
+        data["last_used_by_id"] = member.id
+        data["last_used_by_name"] = str(member)
+        data["last_used_at"] = now
+        history = data.setdefault("joined_users", [])
+        history.append(
+            {
+                "user_id": member.id,
+                "user_name": str(member),
+                "joined_at": now,
+            }
+        )
+        await self._save_record(guild, used[0], data)
 
     @commands.Cog.listener()
     async def on_invite_create(self, invite: discord.Invite) -> None:

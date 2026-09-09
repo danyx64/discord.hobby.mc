@@ -10,14 +10,11 @@ from redbot.core import Config, commands
 from redbot.core.bot import Red
 
 
-VALID_ASSIGNEE_TYPES = {"utente", "ruolo", "bot", "progetto", "altro"}
-
-
 class InviteManager(commands.Cog):
     """Gestione centralizzata e sincronizzata degli inviti Discord."""
 
     __author__ = "danyx64"
-    __version__ = "1.3.0"
+    __version__ = "1.4.0"
 
     def __init__(self, bot: Red):
         self.bot = bot
@@ -80,8 +77,6 @@ class InviteManager(commands.Cog):
                         "purpose": "Importato automaticamente da Discord",
                         "created_by_id": getattr(inviter, "id", None),
                         "created_by_name": str(inviter) if inviter else "Sconosciuto",
-                        "assigned_type": "altro",
-                        "assigned_to": "non assegnato",
                         "created_at": invite.created_at.isoformat() if invite.created_at else self._now(),
                         "uses": invite.uses or 0,
                         "joined_users": [],
@@ -150,22 +145,10 @@ class InviteManager(commands.Cog):
         self,
         ctx: commands.Context,
         invite_type: str,
-        assignee_type: str,
-        assignee: str,
         *,
         purpose: str,
     ) -> None:
-        """Crea un invito permanente nel canale configurato."""
-        assignee_type = assignee_type.lower().strip()
-        if assignee_type == "persona":
-            assignee_type = "utente"
-        if assignee_type not in VALID_ASSIGNEE_TYPES:
-            await ctx.send(
-                f"Tipo assegnatario non valido. Usa uno tra: "
-                f"{', '.join(sorted(VALID_ASSIGNEE_TYPES))}."
-            )
-            return
-
+        """Crea un invito permanente: [p]invset create <tipo> <scopo>."""
         channel_id = await self.config.guild(ctx.guild).invite_channel_id()
         if not channel_id:
             await ctx.send("Prima configura il canale inviti con `[p]invset channel ID_CANALE`.")
@@ -208,8 +191,6 @@ class InviteManager(commands.Cog):
             "purpose": purpose,
             "created_by_id": ctx.author.id,
             "created_by_name": str(ctx.author),
-            "assigned_type": assignee_type,
-            "assigned_to": assignee,
             "created_at": self._now(),
             "uses": created.uses or 0,
             "joined_users": [],
@@ -229,7 +210,6 @@ class InviteManager(commands.Cog):
         embed.add_field(name="Tipo", value=invite_type, inline=True)
         embed.add_field(name="Creatore", value=ctx.author.mention, inline=True)
         embed.add_field(name="Scopo", value=purpose, inline=False)
-        embed.add_field(name="Assegnato", value=f"{assignee_type}: {assignee}", inline=False)
         embed.add_field(name="Scadenza", value="Mai", inline=True)
         embed.add_field(name="Utilizzi", value="Illimitati", inline=True)
         embed.set_footer(text=f"Codice: {created.code}")
@@ -344,11 +324,6 @@ class InviteManager(commands.Cog):
         embed.add_field(name="Tipo", value=data.get("type", "-"), inline=True)
         embed.add_field(name="Creatore", value=creator_value, inline=True)
         embed.add_field(name="Scopo", value=data.get("purpose", "-"), inline=False)
-        embed.add_field(
-            name="Assegnato",
-            value=f"{data.get('assigned_type', '-')}: {data.get('assigned_to', '-')}",
-            inline=False,
-        )
         embed.add_field(name="Utilizzi", value=str(data.get("uses", 0)), inline=True)
         embed.add_field(
             name="Utenti tracciati",
@@ -383,31 +358,17 @@ class InviteManager(commands.Cog):
     async def invset_edit(
         self, ctx: commands.Context, code: str, field: str, *, value: str
     ) -> None:
-        """Modifica tipo, scopo, assegnatario o tipo assegnatario."""
+        """Modifica il tipo o lo scopo di un invito."""
         code = self._normalize_code(code)
         target = {
             "tipo": "type",
             "type": "type",
             "scopo": "purpose",
             "purpose": "purpose",
-            "assegnato": "assigned_to",
-            "assigned": "assigned_to",
-            "assegnato_tipo": "assigned_type",
-            "assigned_type": "assigned_type",
         }.get(field.lower().strip())
         if not target:
-            await ctx.send("Campo non valido. Usa: `tipo`, `scopo`, `assegnato`, `assegnato_tipo`.")
+            await ctx.send("Campo non valido. Usa: `tipo` oppure `scopo`.")
             return
-        if target == "assigned_type":
-            value = value.lower().strip()
-            if value == "persona":
-                value = "utente"
-            if value not in VALID_ASSIGNEE_TYPES:
-                await ctx.send(
-                    f"Tipo assegnatario non valido. Usa: "
-                    f"{', '.join(sorted(VALID_ASSIGNEE_TYPES))}."
-                )
-                return
 
         data = await self._get_record(ctx.guild, code)
         if not data:
